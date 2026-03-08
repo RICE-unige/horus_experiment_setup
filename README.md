@@ -72,6 +72,8 @@ Expected command shape:
 ~/zenoh_internet_bridge/connect_to_cloud.sh <CLOUD_IP> <EXTERNAL_PORT>
 ```
 
+The helper runs Zenoh in `client` mode with multicast scouting disabled to avoid local UDP bind collisions.
+
 If your cloud provider maps external port to a different internal port:
 - keep `ZENOH_PORT` for the cloud bridge listen port (internal),
 - set `ZENOH_EXTERNAL_PORT` for the printed local connect command (public mapped port).

@@ -306,7 +306,7 @@ if [[ -z "${1:-}" ]]; then
   echo "Usage: $0 <CLOUD_IP> [PORT]"
   exit 1
 fi
-"${BRIDGE_PATH}" -e "tcp/${1}:${PORT}"
+"${BRIDGE_PATH}" --no-multicast-scouting -e "tcp/${1}:${PORT}" client
 EOF
     chmod +x "${ZENOH_CONNECT_SCRIPT}"
     ok "Created local connect helper at $(display_path "${ZENOH_CONNECT_SCRIPT}")"
