@@ -138,6 +138,82 @@ require_executable() {
   [[ -x "${path}" ]] || die "Missing executable ${label}: ${path}"
 }
 
+get_install_prefix() {
+  local -n out_ref="$1"
+  out_ref=()
+  if [[ "${EUID}" -eq 0 ]]; then
+    return
+  fi
+  if ! have_cmd sudo; then
+    die "Package installation requires sudo (or run as root)."
+  fi
+  if sudo -n true >/dev/null 2>&1; then
+    out_ref=(sudo -n)
+  elif [[ -t 0 ]]; then
+    out_ref=(sudo)
+  else
+    die "Package installation requires sudo prompt. Re-run bootstrap in an interactive shell."
+  fi
+}
+
+get_ubuntu_codename() {
+  if [[ ! -r /etc/os-release ]]; then
+    die "Cannot read /etc/os-release to detect distribution."
+  fi
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  if [[ "${ID:-}" != "ubuntu" ]]; then
+    die "This installer currently supports Ubuntu only. Detected ID='${ID:-unknown}'."
+  fi
+  local codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+  [[ -n "${codename}" ]] || die "Could not detect Ubuntu codename from /etc/os-release."
+  printf "%s" "${codename}"
+}
+
+ensure_ros_apt_repository() {
+  local -a install_prefix=("$@")
+  local ubuntu_codename
+  ubuntu_codename="$(get_ubuntu_codename)"
+
+  if [[ "${ubuntu_codename}" != "noble" ]]; then
+    warn "Detected Ubuntu '${ubuntu_codename}'. ROS 2 Jazzy apt packages are expected on Ubuntu noble (24.04)."
+  fi
+
+  if apt-cache show ros-jazzy-ros-base >/dev/null 2>&1; then
+    ok "ROS 2 apt repository already available."
+    return
+  fi
+
+  warn "ROS 2 apt repository not found. Configuring packages.ros.org for Jazzy..."
+  "${install_prefix[@]}" apt-get update
+  "${install_prefix[@]}" apt-get install -y curl gnupg2 ca-certificates lsb-release
+
+  local keyring="/usr/share/keyrings/ros-archive-keyring.gpg"
+  local tmp_key
+  tmp_key="$(mktemp)"
+  curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o "${tmp_key}"
+  gpg --dearmor < "${tmp_key}" > "${tmp_key}.gpg"
+  "${install_prefix[@]}" install -m 644 "${tmp_key}.gpg" "${keyring}"
+  rm -f "${tmp_key}" "${tmp_key}.gpg"
+
+  local arch
+  arch="$(dpkg --print-architecture)"
+  local ros_list_line
+  ros_list_line="deb [arch=${arch} signed-by=${keyring}] http://packages.ros.org/ros2/ubuntu ${ubuntu_codename} main"
+
+  local tmp_list
+  tmp_list="$(mktemp)"
+  printf "%s\n" "${ros_list_line}" > "${tmp_list}"
+  "${install_prefix[@]}" install -m 644 "${tmp_list}" /etc/apt/sources.list.d/ros2.list
+  rm -f "${tmp_list}"
+
+  "${install_prefix[@]}" apt-get update
+  if ! apt-cache show ros-jazzy-ros-base >/dev/null 2>&1; then
+    die "ROS apt repository configured but ros-jazzy packages are still unavailable. Check distro codename and apt connectivity."
+  fi
+  ok "ROS 2 apt repository configured."
+}
+
 ensure_topics_files() {
   require_file "${TOPICS_BASE_FILE}" "topics base file"
   if [[ ! -f "${TOPICS_EXTRA_FILE}" ]]; then
@@ -187,32 +263,29 @@ install_dependencies_if_missing() {
   fi
 
   local -a install_prefix=()
-  if [[ "${EUID}" -eq 0 ]]; then
-    install_prefix=()
-  elif have_cmd sudo; then
-    if sudo -n true >/dev/null 2>&1; then
-      install_prefix=(sudo -n)
-    elif [[ -t 0 ]]; then
-      install_prefix=(sudo)
-    else
-      die "Missing packages: ${missing[*]}. Run bootstrap in an interactive shell with sudo access."
-    fi
-  else
-    die "Missing packages: ${missing[*]}. Install them manually or run bootstrap as root."
-  fi
+  get_install_prefix install_prefix
+  ensure_ros_apt_repository "${install_prefix[@]}"
 
   warn "Installing missing packages: ${missing[*]}"
   "${install_prefix[@]}" apt-get update
-  "${install_prefix[@]}" apt-get install -y "${missing[@]}"
+  if ! "${install_prefix[@]}" apt-get install -y "${missing[@]}"; then
+    die "Failed to install dependencies: ${missing[*]}. Verify ROS apt repo and Ubuntu version."
+  fi
   ok "Installed missing packages."
 }
 
 validate_runtime_paths() {
   require_file "${ROS_SETUP_FILE}" "ROS Jazzy setup file"
   require_executable "${ISAAC_PYTHON}" "Isaac Sim python.sh"
-  require_file "${FAST_ISAAC_SIM}" "fast_isaac_sim.py"
-  require_file "${HOSPITAL_USD}" "hospital_experiment.usda"
-  require_executable "${ZENOH_BRIDGE}" "zenoh-bridge-ros2dds"
+  if [[ ! -f "${FAST_ISAAC_SIM}" ]]; then
+    die "Missing fast_isaac_sim.py at ${FAST_ISAAC_SIM}. Clone isaac-projects to ~/isaac-projects or set FAST_ISAAC_SIM/PROJECT_ROOT."
+  fi
+  if [[ ! -f "${HOSPITAL_USD}" ]]; then
+    die "Missing hospital_experiment.usda at ${HOSPITAL_USD}. Clone isaac-projects or set HOSPITAL_USD explicitly."
+  fi
+  if [[ ! -x "${ZENOH_BRIDGE}" ]]; then
+    die "Missing zenoh bridge at ${ZENOH_BRIDGE}. Clone/install ~/zenoh_internet_bridge or set ZENOH_BRIDGE."
+  fi
   require_file "${GEN_ZENOH_CONFIG_SCRIPT}" "Zenoh config generator"
   if [[ ! -x "${GEN_ZENOH_CONFIG_SCRIPT}" ]]; then
     chmod +x "${GEN_ZENOH_CONFIG_SCRIPT}"
