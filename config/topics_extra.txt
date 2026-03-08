@@ -1,0 +1,7 @@
+# Add extra topic regex entries here (one per line).
+# This file is merged with topics_base.txt when generating zenoh_ros2dds.json5.
+#
+# Examples for future nav/slam:
+# ^/carter[123]/map$
+# ^/carter[123]/scan_matching/pose$
+# ^/carter[123]/slam/.+$
