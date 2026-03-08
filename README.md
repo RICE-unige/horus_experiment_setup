@@ -84,6 +84,8 @@ Zenoh routing config is generated from:
 - `config/topics_base.txt`
 - `config/topics_extra.txt`
 
+The generated config targets `zenoh-bridge-ros2dds v1.6.2` schema (`allow` only, no `deny` block).
+
 To add future topics (navigation/slam/etc):
 1. Edit `config/topics_extra.txt`
 2. Restart experiment:
