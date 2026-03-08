@@ -587,7 +587,6 @@ run_isaac() {
     --headless \
     --render-headless \
     --render-every 2 \
-    --optimize-render \
     --usd-path "${HOSPITAL_USD}" \
     --no-ground-plane \
     --physics-step 0.0166667 \
