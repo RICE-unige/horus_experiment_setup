@@ -8,7 +8,7 @@ This folder provides a cloud orchestration setup for **Experiment 1 (hospital sc
 
 ## Files
 
-- `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `start-exp1a`, `start-exp1b`, `stop-exp1`, `status`, `print-local-connect`)
+- `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `start-exp1a`, `start-exp1b`, `start-exp1rtx`, `stop-exp1`, `status`, `print-local-connect`)
 - `config/cyclonedds.xml` - CycloneDDS config used by this setup
 - `config/topics_base.txt` - baseline allowlisted topic regex rules
 - `config/topics_extra.txt` - editable extra topics for nav/slam and future features
@@ -34,6 +34,7 @@ Other experiment variants:
 ```bash
 ./horus_experiment.sh start-exp1a
 ./horus_experiment.sh start-exp1b
+./horus_experiment.sh start-exp1rtx
 ```
 
 > [!NOTE]
@@ -65,6 +66,7 @@ Stop aliases:
 ```bash
 ./horus_experiment.sh stop-exp1a
 ./horus_experiment.sh stop-exp1b
+./horus_experiment.sh stop-exp1rtx
 ```
 
 Status:
@@ -123,6 +125,10 @@ To add future topics (navigation/slam/etc):
   - USD: `~/isaac-projects/hospital_experiment_exp1b.usda`
   - Camera relays: `carter1` only
   - Scene intent: no LaserScan publishers, camera only on robot1 (`300x200`)
+- `start-exp1rtx`:
+  - USD: `~/isaac-projects/hospital_experiment_rtx3_400x300.usda`
+  - Camera relays: `carter1`, `carter2`, `carter3`
+  - Scene intent: front RTX 2D lidar on all 3 robots, one front camera per robot (`400x300`), PhysX LaserScan disabled via launcher flag
 
 You can override profile USD paths with env vars:
 
@@ -130,6 +136,7 @@ You can override profile USD paths with env vars:
 HOSPITAL_USD=~/isaac-projects/hospital_experiment.usda ./horus_experiment.sh start-exp1
 HOSPITAL_USD_EXP1A=~/isaac-projects/hospital_experiment_exp1a.usda ./horus_experiment.sh start-exp1a
 HOSPITAL_USD_EXP1B=~/isaac-projects/hospital_experiment_exp1b.usda ./horus_experiment.sh start-exp1b
+HOSPITAL_USD_EXP1RTX=~/isaac-projects/hospital_experiment_rtx3_400x300.usda ./horus_experiment.sh start-exp1rtx
 ```
 
 ## Verification
@@ -167,6 +174,7 @@ ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
   - `HOSPITAL_USD` (exp1)
   - `HOSPITAL_USD_EXP1A`
   - `HOSPITAL_USD_EXP1B`
+  - `HOSPITAL_USD_EXP1RTX`
   - `ZENOH_ROOT`, `ZENOH_BRIDGE`, `ZENOH_CONNECT_SCRIPT`
 
 ## Common Cloud Pitfalls

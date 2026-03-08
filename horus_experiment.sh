@@ -40,6 +40,7 @@ FAST_ISAAC_SIM="${FAST_ISAAC_SIM:-${PROJECT_ROOT}/fast_isaac_sim.py}"
 HOSPITAL_USD="${HOSPITAL_USD:-${PROJECT_ROOT}/hospital_experiment.usda}"
 HOSPITAL_USD_EXP1A="${HOSPITAL_USD_EXP1A:-${PROJECT_ROOT}/hospital_experiment_exp1a.usda}"
 HOSPITAL_USD_EXP1B="${HOSPITAL_USD_EXP1B:-${PROJECT_ROOT}/hospital_experiment_exp1b.usda}"
+HOSPITAL_USD_EXP1RTX="${HOSPITAL_USD_EXP1RTX:-${PROJECT_ROOT}/hospital_experiment_rtx3_400x300.usda}"
 ISAAC_PROJECTS_REPO_URL="${ISAAC_PROJECTS_REPO_URL:-https://github.com/Omotoye/isaac-projects.git}"
 ISAAC_PROJECTS_REF="${ISAAC_PROJECTS_REF:-main}"
 
@@ -92,11 +93,12 @@ die() {
 }
 
 usage() {
-  local fast_isaac_sim_display hospital_usd_display hospital_usd_exp1a_display hospital_usd_exp1b_display zenoh_root_display zenoh_bridge_display zenoh_connect_display
+  local fast_isaac_sim_display hospital_usd_display hospital_usd_exp1a_display hospital_usd_exp1b_display hospital_usd_exp1rtx_display zenoh_root_display zenoh_bridge_display zenoh_connect_display
   fast_isaac_sim_display="$(display_path "${FAST_ISAAC_SIM}")"
   hospital_usd_display="$(display_path "${HOSPITAL_USD}")"
   hospital_usd_exp1a_display="$(display_path "${HOSPITAL_USD_EXP1A}")"
   hospital_usd_exp1b_display="$(display_path "${HOSPITAL_USD_EXP1B}")"
+  hospital_usd_exp1rtx_display="$(display_path "${HOSPITAL_USD_EXP1RTX}")"
   zenoh_root_display="$(display_path "${ZENOH_ROOT}")"
   zenoh_bridge_display="$(display_path "${ZENOH_BRIDGE}")"
   zenoh_connect_display="$(display_path "${ZENOH_CONNECT_SCRIPT}")"
@@ -108,9 +110,11 @@ Commands:
   start-exp1          Start hospital experiment exp1 in tmux session '${SESSION_NAME}'.
   start-exp1a         Start hospital experiment exp1a in tmux session '${SESSION_NAME}'.
   start-exp1b         Start hospital experiment exp1b in tmux session '${SESSION_NAME}'.
+  start-exp1rtx       Start hospital experiment exp1rtx in tmux session '${SESSION_NAME}'.
   stop-exp1           Stop tmux session '${SESSION_NAME}'.
   stop-exp1a          Alias of stop-exp1.
   stop-exp1b          Alias of stop-exp1.
+  stop-exp1rtx        Alias of stop-exp1.
   status              Show orchestration status and key runtime info.
   print-local-connect Print local-machine zenoh bridge connect command.
 
@@ -123,6 +127,7 @@ Environment overrides:
   HOSPITAL_USD        (exp1 default: ${hospital_usd_display})
   HOSPITAL_USD_EXP1A  (exp1a default: ${hospital_usd_exp1a_display})
   HOSPITAL_USD_EXP1B  (exp1b default: ${hospital_usd_exp1b_display})
+  HOSPITAL_USD_EXP1RTX (exp1rtx default: ${hospital_usd_exp1rtx_display})
   ISAAC_PROJECTS_REPO_URL (default: ${ISAAC_PROJECTS_REPO_URL})
   ISAAC_PROJECTS_REF  (default: ${ISAAC_PROJECTS_REF})
   ZENOH_ROOT          (default: ${zenoh_root_display})
@@ -156,6 +161,9 @@ resolve_experiment_usd() {
       ;;
     exp1b)
       printf '%s' "${HOSPITAL_USD_EXP1B}"
+      ;;
+    exp1rtx)
+      printf '%s' "${HOSPITAL_USD_EXP1RTX}"
       ;;
     *)
       die "Unsupported experiment profile '${profile}'."
@@ -426,7 +434,7 @@ validate_experiment_profile() {
   local usd_path
   usd_path="$(resolve_experiment_usd "${profile}")"
   if [[ ! -f "${usd_path}" ]]; then
-    die "Missing ${profile} USD at ${usd_path}. Set HOSPITAL_USD/HOSPITAL_USD_EXP1A/HOSPITAL_USD_EXP1B or update isaac-projects."
+    die "Missing ${profile} USD at ${usd_path}. Set HOSPITAL_USD/HOSPITAL_USD_EXP1A/HOSPITAL_USD_EXP1B/HOSPITAL_USD_EXP1RTX or update isaac-projects."
   fi
 }
 
@@ -450,6 +458,7 @@ bootstrap() {
   printf "  %s start-exp1\n" "$0"
   printf "  %s start-exp1a\n" "$0"
   printf "  %s start-exp1b\n" "$0"
+  printf "  %s start-exp1rtx\n" "$0"
 }
 
 tmux_has_session() {
@@ -510,6 +519,10 @@ start_exp1b() {
   start_experiment exp1b
 }
 
+start_exp1rtx() {
+  start_experiment exp1rtx
+}
+
 stop_exp1() {
   info "Stopping session '${SESSION_NAME}'..."
   if tmux_has_session; then
@@ -531,6 +544,7 @@ status() {
   printf "  usd (exp1): %s\n" "$(display_path "${HOSPITAL_USD}")"
   printf "  usd (exp1a): %s\n" "$(display_path "${HOSPITAL_USD_EXP1A}")"
   printf "  usd (exp1b): %s\n" "$(display_path "${HOSPITAL_USD_EXP1B}")"
+  printf "  usd (exp1rtx): %s\n" "$(display_path "${HOSPITAL_USD_EXP1RTX}")"
   printf "  session: %s\n" "${SESSION_NAME}"
   printf "  zenoh listen port (cloud internal): %s\n" "${ZENOH_PORT}"
   printf "  zenoh external port (local connect): %s\n" "${ZENOH_EXTERNAL_PORT}"
@@ -624,6 +638,9 @@ run_compress() {
     exp1)
       robots=(carter1 carter2 carter3)
       ;;
+    exp1rtx)
+      robots=(carter1 carter2 carter3)
+      ;;
     exp1a|exp1b)
       robots=(carter1)
       ;;
@@ -645,6 +662,7 @@ run_compress() {
 run_isaac() {
   local profile="${1:-exp1}"
   local usd_path
+  local -a extra_args=()
   usd_path="$(resolve_experiment_usd "${profile}")"
 
   require_file "${ENV_FILE}" "cloud ROS env file"
@@ -657,6 +675,10 @@ run_isaac() {
   source "${ENV_FILE}"
   set -u
 
+  if [[ "${profile}" == "exp1rtx" ]]; then
+    extra_args+=(--disable-physx-laserscan)
+  fi
+
   info "Starting Isaac Sim hospital experiment (${profile})..."
   info "USD path: ${usd_path}"
   exec "${ISAAC_PYTHON}" "${FAST_ISAAC_SIM}" \
@@ -665,6 +687,7 @@ run_isaac() {
     --render-every 2 \
     --aa-mode 3 \
     --dlss-exec-mode 0 \
+    "${extra_args[@]}" \
     --usd-path "${usd_path}" \
     --no-ground-plane \
     --physics-step 0.0166667 \
@@ -687,10 +710,13 @@ main() {
     start-exp1b)
       start_exp1b
       ;;
+    start-exp1rtx)
+      start_exp1rtx
+      ;;
     stop-exp1)
       stop_exp1
       ;;
-    stop-exp1a|stop-exp1b)
+    stop-exp1a|stop-exp1b|stop-exp1rtx)
       stop_exp1
       ;;
     status)
