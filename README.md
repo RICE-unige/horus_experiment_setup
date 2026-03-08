@@ -41,7 +41,7 @@ Other experiment variants:
 > `bootstrap` now auto-configures the ROS 2 apt repository for Jazzy on Ubuntu when it is missing.
 > It also auto-downloads `zenoh-bridge-ros2dds` and auto-clones `isaac-projects` to `~/isaac-projects` when not found.
 > Default internal Zenoh listen port is `10000` unless you override `ZENOH_PORT`.
-> Experiment 1 now runs hospital cameras at `640x480` and launches without `--optimize-render` to avoid dark rendering.
+> Experiment profiles launch hospital scenes with DLSS Performance (`--aa-mode 3 --dlss-exec-mode 0`) and without `--optimize-render` to avoid dark rendering.
 
 Attach to logs:
 

@@ -663,6 +663,8 @@ run_isaac() {
     --headless \
     --render-headless \
     --render-every 2 \
+    --aa-mode 3 \
+    --dlss-exec-mode 0 \
     --usd-path "${usd_path}" \
     --no-ground-plane \
     --physics-step 0.0166667 \
