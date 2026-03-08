@@ -8,7 +8,6 @@ This folder provides a cloud orchestration setup for **Experiment 1 (hospital sc
 
 ## Files
 
-- `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `stop-exp1`, `status`, `print-local-connect`)
 - `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `start-exp1a`, `start-exp1b`, `stop-exp1`, `status`, `print-local-connect`)
 - `config/cyclonedds.xml` - CycloneDDS config used by this setup
 - `config/topics_base.txt` - baseline allowlisted topic regex rules
