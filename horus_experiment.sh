@@ -14,7 +14,7 @@ GEN_ZENOH_CONFIG_SCRIPT="${CONFIG_DIR}/gen_zenoh_config.sh"
 ZENOH_CONFIG_FILE="${CONFIG_DIR}/zenoh_ros2dds.json5"
 
 SESSION_NAME="${HORUS_TMUX_SESSION:-horus_exp1}"
-ZENOH_PORT="${ZENOH_PORT:-7447}"
+ZENOH_PORT="${ZENOH_PORT:-10000}"
 ZENOH_EXTERNAL_PORT="${ZENOH_EXTERNAL_PORT:-${ZENOH_PORT}}"
 
 ROS_SETUP_FILE="/opt/ros/jazzy/setup.bash"
@@ -301,7 +301,7 @@ ensure_zenoh_bridge_assets() {
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRIDGE_PATH="${SCRIPT_DIR}/zenoh-bridge-ros2dds"
-PORT="${2:-7447}"
+PORT="${2:-10000}"
 if [[ -z "${1:-}" ]]; then
   echo "Usage: $0 <CLOUD_IP> [PORT]"
   exit 1
@@ -443,7 +443,15 @@ start_exp1() {
 
   ok "tmux session '${SESSION_NAME}' started."
   printf "\nAttach to session:\n"
-  printf "  tmux attach -t %s\n\n" "${SESSION_NAME}"
+  if [[ -n "${TMUX:-}" ]]; then
+    printf "  tmux switch-client -t %s\n\n" "${SESSION_NAME}"
+  else
+    printf "  tmux attach -t %s\n\n" "${SESSION_NAME}"
+  fi
+
+  printf "ROS CLI in this shell:\n"
+  printf "  source /opt/ros/jazzy/setup.bash\n"
+  printf "  source %s\n\n" "$(display_path "${ENV_FILE}")"
 
   print_local_connect
 }

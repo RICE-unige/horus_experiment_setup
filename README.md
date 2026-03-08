@@ -32,11 +32,18 @@ chmod +x config/gen_zenoh_config.sh
 > [!NOTE]
 > `bootstrap` now auto-configures the ROS 2 apt repository for Jazzy on Ubuntu when it is missing.
 > It also auto-downloads `zenoh-bridge-ros2dds` and auto-clones `isaac-projects` to `~/isaac-projects` when not found.
+> Default internal Zenoh listen port is `10000` unless you override `ZENOH_PORT`.
 
 Attach to logs:
 
 ```bash
 tmux attach -t horus_exp1
+```
+
+If your shell is already inside tmux:
+
+```bash
+tmux switch-client -t horus_exp1
 ```
 
 Stop:
