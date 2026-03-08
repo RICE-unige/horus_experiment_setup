@@ -20,6 +20,13 @@ ZENOH_EXTERNAL_PORT="${ZENOH_EXTERNAL_PORT:-${ZENOH_PORT}}"
 ROS_SETUP_FILE="/opt/ros/jazzy/setup.bash"
 ISAAC_PYTHON="${ISAAC_PYTHON:-/isaac-sim/python.sh}"
 
+PROJECT_ROOT_OVERRIDDEN="${PROJECT_ROOT+x}"
+FAST_ISAAC_SIM_OVERRIDDEN="${FAST_ISAAC_SIM+x}"
+HOSPITAL_USD_OVERRIDDEN="${HOSPITAL_USD+x}"
+ZENOH_ROOT_OVERRIDDEN="${ZENOH_ROOT+x}"
+ZENOH_BRIDGE_OVERRIDDEN="${ZENOH_BRIDGE+x}"
+ZENOH_CONNECT_SCRIPT_OVERRIDDEN="${ZENOH_CONNECT_SCRIPT+x}"
+
 PROJECT_ROOT_CANDIDATE_1="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_ROOT_CANDIDATE_2="${HOME}/isaac-projects"
 if [[ -f "${PROJECT_ROOT_CANDIDATE_1}/fast_isaac_sim.py" ]]; then
@@ -31,6 +38,8 @@ PROJECT_ROOT="${PROJECT_ROOT:-${PROJECT_ROOT_DEFAULT}}"
 
 FAST_ISAAC_SIM="${FAST_ISAAC_SIM:-${PROJECT_ROOT}/fast_isaac_sim.py}"
 HOSPITAL_USD="${HOSPITAL_USD:-${PROJECT_ROOT}/hospital_experiment.usda}"
+ISAAC_PROJECTS_REPO_URL="${ISAAC_PROJECTS_REPO_URL:-https://github.com/Omotoye/isaac-projects.git}"
+ISAAC_PROJECTS_REF="${ISAAC_PROJECTS_REF:-main}"
 
 ZENOH_ROOT_DEFAULT="${HOME}/zenoh_internet_bridge"
 ZENOH_ROOT_FALLBACK="${HOME}/zenoh_internet_bridge"
@@ -43,6 +52,7 @@ else
 fi
 ZENOH_BRIDGE="${ZENOH_BRIDGE:-${ZENOH_ROOT}/zenoh-bridge-ros2dds}"
 ZENOH_CONNECT_SCRIPT="${ZENOH_CONNECT_SCRIPT:-${ZENOH_ROOT}/connect_to_cloud.sh}"
+ZENOH_BRIDGE_VERSION="${ZENOH_BRIDGE_VERSION:-1.6.2}"
 
 if [[ -t 1 ]]; then
   C_RESET="$(printf '\033[0m')"
@@ -103,9 +113,12 @@ Environment overrides:
   ISAAC_PYTHON        (default: ${ISAAC_PYTHON})
   FAST_ISAAC_SIM      (default: ${fast_isaac_sim_display})
   HOSPITAL_USD        (default: ${hospital_usd_display})
+  ISAAC_PROJECTS_REPO_URL (default: ${ISAAC_PROJECTS_REPO_URL})
+  ISAAC_PROJECTS_REF  (default: ${ISAAC_PROJECTS_REF})
   ZENOH_ROOT          (default: ${zenoh_root_display})
   ZENOH_BRIDGE        (default: ${zenoh_bridge_display})
   ZENOH_CONNECT_SCRIPT(default: ${zenoh_connect_display})
+  ZENOH_BRIDGE_VERSION(default: ${ZENOH_BRIDGE_VERSION})
 EOF
 }
 
@@ -214,6 +227,92 @@ ensure_ros_apt_repository() {
   ok "ROS 2 apt repository configured."
 }
 
+download_url() {
+  local url="$1"
+  local out="$2"
+  if have_cmd curl; then
+    curl -fsSL "${url}" -o "${out}"
+  elif have_cmd wget; then
+    wget -qO "${out}" "${url}"
+  else
+    die "Neither curl nor wget is available to download ${url}"
+  fi
+}
+
+ensure_isaac_projects_checkout() {
+  if [[ -f "${FAST_ISAAC_SIM}" && -f "${HOSPITAL_USD}" ]]; then
+    return
+  fi
+
+  if [[ -n "${PROJECT_ROOT_OVERRIDDEN}" || -n "${FAST_ISAAC_SIM_OVERRIDDEN}" || -n "${HOSPITAL_USD_OVERRIDDEN}" ]]; then
+    return
+  fi
+
+  if ! have_cmd git; then
+    die "isaac-projects is missing and git is not installed. Install git or set FAST_ISAAC_SIM/HOSPITAL_USD."
+  fi
+
+  if [[ ! -d "${PROJECT_ROOT}" ]]; then
+    warn "isaac-projects not found at $(display_path "${PROJECT_ROOT}"). Cloning ${ISAAC_PROJECTS_REPO_URL}..."
+    git clone --depth 1 --branch "${ISAAC_PROJECTS_REF}" "${ISAAC_PROJECTS_REPO_URL}" "${PROJECT_ROOT}"
+  elif [[ -d "${PROJECT_ROOT}/.git" ]]; then
+    info "Found existing project checkout at $(display_path "${PROJECT_ROOT}")"
+  fi
+}
+
+ensure_zenoh_bridge_assets() {
+  if [[ -x "${ZENOH_BRIDGE}" && -x "${ZENOH_CONNECT_SCRIPT}" ]]; then
+    return
+  fi
+
+  if [[ -n "${ZENOH_BRIDGE_OVERRIDDEN}" || -n "${ZENOH_CONNECT_SCRIPT_OVERRIDDEN}" || -n "${ZENOH_ROOT_OVERRIDDEN}" ]]; then
+    return
+  fi
+
+  mkdir -p "${ZENOH_ROOT}"
+
+  if [[ ! -x "${ZENOH_BRIDGE}" ]]; then
+    local arch
+    arch="$(dpkg --print-architecture)"
+    local zenoh_arch
+    case "${arch}" in
+      amd64) zenoh_arch="x86_64" ;;
+      arm64) zenoh_arch="aarch64" ;;
+      *) die "Unsupported architecture '${arch}' for zenoh bridge auto-download." ;;
+    esac
+
+    local zip_name
+    zip_name="zenoh-plugin-ros2dds-${ZENOH_BRIDGE_VERSION}-${zenoh_arch}-unknown-linux-gnu-standalone.zip"
+    local zip_url
+    zip_url="https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/releases/download/${ZENOH_BRIDGE_VERSION}/${zip_name}"
+    local zip_path
+    zip_path="${ZENOH_ROOT}/${zip_name}"
+
+    warn "zenoh bridge binary not found. Downloading ${zip_name}..."
+    download_url "${zip_url}" "${zip_path}"
+    unzip -o "${zip_path}" -d "${ZENOH_ROOT}" >/dev/null
+    chmod +x "${ZENOH_ROOT}/zenoh-bridge-ros2dds"
+    ok "Installed zenoh bridge to $(display_path "${ZENOH_ROOT}/zenoh-bridge-ros2dds")"
+  fi
+
+  if [[ ! -x "${ZENOH_CONNECT_SCRIPT}" ]]; then
+    cat > "${ZENOH_CONNECT_SCRIPT}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BRIDGE_PATH="${SCRIPT_DIR}/zenoh-bridge-ros2dds"
+PORT="${2:-7447}"
+if [[ -z "${1:-}" ]]; then
+  echo "Usage: $0 <CLOUD_IP> [PORT]"
+  exit 1
+fi
+"${BRIDGE_PATH}" -e "tcp/${1}:${PORT}"
+EOF
+    chmod +x "${ZENOH_CONNECT_SCRIPT}"
+    ok "Created local connect helper at $(display_path "${ZENOH_CONNECT_SCRIPT}")"
+  fi
+}
+
 ensure_topics_files() {
   require_file "${TOPICS_BASE_FILE}" "topics base file"
   if [[ ! -f "${TOPICS_EXTRA_FILE}" ]]; then
@@ -242,6 +341,8 @@ EOF
 
 install_dependencies_if_missing() {
   local packages=(
+    git
+    unzip
     ros-jazzy-ros-base
     ros-jazzy-rmw-cyclonedds-cpp
     ros-jazzy-image-transport
@@ -304,6 +405,8 @@ bootstrap() {
   info "Bootstrapping Horus cloud setup for experiment 1..."
   ensure_directories
   install_dependencies_if_missing
+  ensure_isaac_projects_checkout
+  ensure_zenoh_bridge_assets
   validate_runtime_paths
   write_env_file
   run_zenoh_config_generator

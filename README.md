@@ -20,7 +20,7 @@ This folder provides a cloud orchestration setup for **Experiment 1 (hospital sc
 From your cloud home folder:
 
 ```bash
-git clone git@github.com:RICE-unige/horus_experiment_setup.git
+git clone https://github.com/RICE-unige/horus_experiment_setup.git
 cd ~/horus_experiment_setup
 chmod +x horus_experiment.sh
 chmod +x config/gen_zenoh_config.sh
@@ -31,6 +31,7 @@ chmod +x config/gen_zenoh_config.sh
 
 > [!NOTE]
 > `bootstrap` now auto-configures the ROS 2 apt repository for Jazzy on Ubuntu when it is missing.
+> It also auto-downloads `zenoh-bridge-ros2dds` and auto-clones `isaac-projects` to `~/isaac-projects` when not found.
 
 Attach to logs:
 
@@ -121,7 +122,7 @@ ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
 ## Common Cloud Pitfalls
 
 - If your shell user is `root`, `~` resolves to `/root`.
-- If `bootstrap` says `Missing fast_isaac_sim.py`, clone `isaac-projects` to `~/isaac-projects` or set `FAST_ISAAC_SIM` and `HOSPITAL_USD`.
+- If your custom project location is not `~/isaac-projects`, set `PROJECT_ROOT` (or `FAST_ISAAC_SIM`/`HOSPITAL_USD`) before running `bootstrap`.
 - If public and internal ports differ, set both:
   - `ZENOH_PORT=<internal>`
   - `ZENOH_EXTERNAL_PORT=<public>`
