@@ -9,6 +9,7 @@ This folder provides a cloud orchestration setup for **Experiment 1 (hospital sc
 ## Files
 
 - `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `stop-exp1`, `status`, `print-local-connect`)
+- `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `start-exp1a`, `start-exp1b`, `stop-exp1`, `status`, `print-local-connect`)
 - `config/cyclonedds.xml` - CycloneDDS config used by this setup
 - `config/topics_base.txt` - baseline allowlisted topic regex rules
 - `config/topics_extra.txt` - editable extra topics for nav/slam and future features
@@ -27,6 +28,13 @@ chmod +x config/gen_zenoh_config.sh
 
 ./horus_experiment.sh bootstrap
 ./horus_experiment.sh start-exp1
+```
+
+Other experiment variants:
+
+```bash
+./horus_experiment.sh start-exp1a
+./horus_experiment.sh start-exp1b
 ```
 
 > [!NOTE]
@@ -51,6 +59,13 @@ Stop:
 
 ```bash
 ./horus_experiment.sh stop-exp1
+```
+
+Stop aliases:
+
+```bash
+./horus_experiment.sh stop-exp1a
+./horus_experiment.sh stop-exp1b
 ```
 
 Status:
@@ -96,6 +111,28 @@ To add future topics (navigation/slam/etc):
 ./horus_experiment.sh start-exp1
 ```
 
+## Experiment Profiles
+
+- `start-exp1`:
+  - USD: `~/isaac-projects/hospital_experiment.usda`
+  - Camera relays: `carter1`, `carter2`, `carter3`
+- `start-exp1a`:
+  - USD: `~/isaac-projects/hospital_experiment_exp1a.usda`
+  - Camera relays: `carter1` only
+  - Scene intent: all 3 robots LaserScan on, camera only on robot1 (`300x200`)
+- `start-exp1b`:
+  - USD: `~/isaac-projects/hospital_experiment_exp1b.usda`
+  - Camera relays: `carter1` only
+  - Scene intent: no LaserScan publishers, camera only on robot1 (`300x200`)
+
+You can override profile USD paths with env vars:
+
+```bash
+HOSPITAL_USD=~/isaac-projects/hospital_experiment.usda ./horus_experiment.sh start-exp1
+HOSPITAL_USD_EXP1A=~/isaac-projects/hospital_experiment_exp1a.usda ./horus_experiment.sh start-exp1a
+HOSPITAL_USD_EXP1B=~/isaac-projects/hospital_experiment_exp1b.usda ./horus_experiment.sh start-exp1b
+```
+
 ## Verification
 
 On cloud:
@@ -128,7 +165,9 @@ ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
   - `ZENOH_EXTERNAL_PORT` (public/local connect port)
   - `ISAAC_PYTHON`
   - `FAST_ISAAC_SIM`
-  - `HOSPITAL_USD`
+  - `HOSPITAL_USD` (exp1)
+  - `HOSPITAL_USD_EXP1A`
+  - `HOSPITAL_USD_EXP1B`
   - `ZENOH_ROOT`, `ZENOH_BRIDGE`, `ZENOH_CONNECT_SCRIPT`
 
 ## Common Cloud Pitfalls

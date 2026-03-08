@@ -38,6 +38,8 @@ PROJECT_ROOT="${PROJECT_ROOT:-${PROJECT_ROOT_DEFAULT}}"
 
 FAST_ISAAC_SIM="${FAST_ISAAC_SIM:-${PROJECT_ROOT}/fast_isaac_sim.py}"
 HOSPITAL_USD="${HOSPITAL_USD:-${PROJECT_ROOT}/hospital_experiment.usda}"
+HOSPITAL_USD_EXP1A="${HOSPITAL_USD_EXP1A:-${PROJECT_ROOT}/hospital_experiment_exp1a.usda}"
+HOSPITAL_USD_EXP1B="${HOSPITAL_USD_EXP1B:-${PROJECT_ROOT}/hospital_experiment_exp1b.usda}"
 ISAAC_PROJECTS_REPO_URL="${ISAAC_PROJECTS_REPO_URL:-https://github.com/Omotoye/isaac-projects.git}"
 ISAAC_PROJECTS_REF="${ISAAC_PROJECTS_REF:-main}"
 
@@ -90,9 +92,11 @@ die() {
 }
 
 usage() {
-  local fast_isaac_sim_display hospital_usd_display zenoh_root_display zenoh_bridge_display zenoh_connect_display
+  local fast_isaac_sim_display hospital_usd_display hospital_usd_exp1a_display hospital_usd_exp1b_display zenoh_root_display zenoh_bridge_display zenoh_connect_display
   fast_isaac_sim_display="$(display_path "${FAST_ISAAC_SIM}")"
   hospital_usd_display="$(display_path "${HOSPITAL_USD}")"
+  hospital_usd_exp1a_display="$(display_path "${HOSPITAL_USD_EXP1A}")"
+  hospital_usd_exp1b_display="$(display_path "${HOSPITAL_USD_EXP1B}")"
   zenoh_root_display="$(display_path "${ZENOH_ROOT}")"
   zenoh_bridge_display="$(display_path "${ZENOH_BRIDGE}")"
   zenoh_connect_display="$(display_path "${ZENOH_CONNECT_SCRIPT}")"
@@ -101,8 +105,12 @@ Usage: $(basename "$0") <command>
 
 Commands:
   bootstrap           Install/check dependencies and generate local env file.
-  start-exp1          Start hospital experiment in tmux session '${SESSION_NAME}'.
+  start-exp1          Start hospital experiment exp1 in tmux session '${SESSION_NAME}'.
+  start-exp1a         Start hospital experiment exp1a in tmux session '${SESSION_NAME}'.
+  start-exp1b         Start hospital experiment exp1b in tmux session '${SESSION_NAME}'.
   stop-exp1           Stop tmux session '${SESSION_NAME}'.
+  stop-exp1a          Alias of stop-exp1.
+  stop-exp1b          Alias of stop-exp1.
   status              Show orchestration status and key runtime info.
   print-local-connect Print local-machine zenoh bridge connect command.
 
@@ -112,7 +120,9 @@ Environment overrides:
   ZENOH_EXTERNAL_PORT (public/local connect port, default: ${ZENOH_EXTERNAL_PORT})
   ISAAC_PYTHON        (default: ${ISAAC_PYTHON})
   FAST_ISAAC_SIM      (default: ${fast_isaac_sim_display})
-  HOSPITAL_USD        (default: ${hospital_usd_display})
+  HOSPITAL_USD        (exp1 default: ${hospital_usd_display})
+  HOSPITAL_USD_EXP1A  (exp1a default: ${hospital_usd_exp1a_display})
+  HOSPITAL_USD_EXP1B  (exp1b default: ${hospital_usd_exp1b_display})
   ISAAC_PROJECTS_REPO_URL (default: ${ISAAC_PROJECTS_REPO_URL})
   ISAAC_PROJECTS_REF  (default: ${ISAAC_PROJECTS_REF})
   ZENOH_ROOT          (default: ${zenoh_root_display})
@@ -133,6 +143,24 @@ display_path() {
   else
     printf '%s' "${p}"
   fi
+}
+
+resolve_experiment_usd() {
+  local profile="$1"
+  case "${profile}" in
+    exp1)
+      printf '%s' "${HOSPITAL_USD}"
+      ;;
+    exp1a)
+      printf '%s' "${HOSPITAL_USD_EXP1A}"
+      ;;
+    exp1b)
+      printf '%s' "${HOSPITAL_USD_EXP1B}"
+      ;;
+    *)
+      die "Unsupported experiment profile '${profile}'."
+      ;;
+  esac
 }
 
 ensure_directories() {
@@ -381,9 +409,6 @@ validate_runtime_paths() {
   if [[ ! -f "${FAST_ISAAC_SIM}" ]]; then
     die "Missing fast_isaac_sim.py at ${FAST_ISAAC_SIM}. Clone isaac-projects to ~/isaac-projects or set FAST_ISAAC_SIM/PROJECT_ROOT."
   fi
-  if [[ ! -f "${HOSPITAL_USD}" ]]; then
-    die "Missing hospital_experiment.usda at ${HOSPITAL_USD}. Clone isaac-projects or set HOSPITAL_USD explicitly."
-  fi
   if [[ ! -x "${ZENOH_BRIDGE}" ]]; then
     die "Missing zenoh bridge at ${ZENOH_BRIDGE}. Clone/install ~/zenoh_internet_bridge or set ZENOH_BRIDGE."
   fi
@@ -393,6 +418,15 @@ validate_runtime_paths() {
   fi
   if [[ ! -x "${ZENOH_CONNECT_SCRIPT}" ]]; then
     warn "Local connect script not found or not executable at ${ZENOH_CONNECT_SCRIPT}"
+  fi
+}
+
+validate_experiment_profile() {
+  local profile="$1"
+  local usd_path
+  usd_path="$(resolve_experiment_usd "${profile}")"
+  if [[ ! -f "${usd_path}" ]]; then
+    die "Missing ${profile} USD at ${usd_path}. Set HOSPITAL_USD/HOSPITAL_USD_EXP1A/HOSPITAL_USD_EXP1B or update isaac-projects."
   fi
 }
 
@@ -414,17 +448,23 @@ bootstrap() {
   ok "Bootstrap complete."
   printf "\nNext step:\n"
   printf "  %s start-exp1\n" "$0"
+  printf "  %s start-exp1a\n" "$0"
+  printf "  %s start-exp1b\n" "$0"
 }
 
 tmux_has_session() {
   tmux has-session -t "${SESSION_NAME}" >/dev/null 2>&1
 }
 
-start_exp1() {
-  info "Starting experiment 1 in tmux session '${SESSION_NAME}'..."
+start_experiment() {
+  local profile="$1"
+  local usd_path
+  usd_path="$(resolve_experiment_usd "${profile}")"
+  info "Starting ${profile} in tmux session '${SESSION_NAME}'..."
   local script_path="${SCRIPT_DIR}/horus_experiment.sh"
   ensure_directories
   validate_runtime_paths
+  validate_experiment_profile "${profile}"
   require_file "${ENV_FILE}" "cloud ROS env file (run bootstrap first)"
   require_file "${CYCLONEDDS_XML}" "CycloneDDS config"
 
@@ -437,11 +477,13 @@ start_exp1() {
 
   tmux new-session -d -s "${SESSION_NAME}" -n bridge "${script_path} _run-bridge ${ZENOH_PORT}"
   tmux setw -t "${SESSION_NAME}" remain-on-exit on
-  tmux new-window -t "${SESSION_NAME}:" -n compress "${script_path} _run-compress"
-  tmux new-window -t "${SESSION_NAME}:" -n isaac "${script_path} _run-isaac"
+  tmux new-window -t "${SESSION_NAME}:" -n compress "${script_path} _run-compress ${profile}"
+  tmux new-window -t "${SESSION_NAME}:" -n isaac "${script_path} _run-isaac ${profile}"
   tmux select-window -t "${SESSION_NAME}:isaac"
 
   ok "tmux session '${SESSION_NAME}' started."
+  printf "Profile: %s\n" "${profile}"
+  printf "USD: %s\n\n" "$(display_path "${usd_path}")"
   printf "\nAttach to session:\n"
   if [[ -n "${TMUX:-}" ]]; then
     printf "  tmux switch-client -t %s\n\n" "${SESSION_NAME}"
@@ -456,8 +498,20 @@ start_exp1() {
   print_local_connect
 }
 
+start_exp1() {
+  start_experiment exp1
+}
+
+start_exp1a() {
+  start_experiment exp1a
+}
+
+start_exp1b() {
+  start_experiment exp1b
+}
+
 stop_exp1() {
-  info "Stopping experiment 1 session '${SESSION_NAME}'..."
+  info "Stopping session '${SESSION_NAME}'..."
   if tmux_has_session; then
     tmux kill-session -t "${SESSION_NAME}"
     ok "Session '${SESSION_NAME}' stopped."
@@ -474,7 +528,9 @@ status() {
   printf "  zenoh bridge: %s\n" "$(display_path "${ZENOH_BRIDGE}")"
   printf "  isaac python: %s\n" "$(display_path "${ISAAC_PYTHON}")"
   printf "  launcher: %s\n" "$(display_path "${FAST_ISAAC_SIM}")"
-  printf "  usd: %s\n" "$(display_path "${HOSPITAL_USD}")"
+  printf "  usd (exp1): %s\n" "$(display_path "${HOSPITAL_USD}")"
+  printf "  usd (exp1a): %s\n" "$(display_path "${HOSPITAL_USD_EXP1A}")"
+  printf "  usd (exp1b): %s\n" "$(display_path "${HOSPITAL_USD_EXP1B}")"
   printf "  session: %s\n" "${SESSION_NAME}"
   printf "  zenoh listen port (cloud internal): %s\n" "${ZENOH_PORT}"
   printf "  zenoh external port (local connect): %s\n" "${ZENOH_EXTERNAL_PORT}"
@@ -554,6 +610,8 @@ start_one_compression_relay() {
 }
 
 run_compress() {
+  local profile="${1:-exp1}"
+  local -a robots=()
   require_file "${ENV_FILE}" "cloud ROS env file"
   set +u
   # shellcheck disable=SC1090
@@ -562,32 +620,50 @@ run_compress() {
 
   have_cmd ros2 || die "ros2 command not found after sourcing ${ENV_FILE}"
 
+  case "${profile}" in
+    exp1)
+      robots=(carter1 carter2 carter3)
+      ;;
+    exp1a|exp1b)
+      robots=(carter1)
+      ;;
+    *)
+      die "Unknown profile '${profile}' for compression relays."
+      ;;
+  esac
+
   trap 'warn "Stopping image compression relays..."; kill 0 >/dev/null 2>&1 || true' INT TERM
 
-  start_one_compression_relay carter1 &
-  start_one_compression_relay carter2 &
-  start_one_compression_relay carter3 &
+  local robot
+  for robot in "${robots[@]}"; do
+    start_one_compression_relay "${robot}" &
+  done
 
   wait
 }
 
 run_isaac() {
+  local profile="${1:-exp1}"
+  local usd_path
+  usd_path="$(resolve_experiment_usd "${profile}")"
+
   require_file "${ENV_FILE}" "cloud ROS env file"
   require_executable "${ISAAC_PYTHON}" "Isaac Sim python.sh"
   require_file "${FAST_ISAAC_SIM}" "fast_isaac_sim.py"
-  require_file "${HOSPITAL_USD}" "hospital_experiment.usda"
+  require_file "${usd_path}" "${profile} usd"
 
   set +u
   # shellcheck disable=SC1090
   source "${ENV_FILE}"
   set -u
 
-  info "Starting Isaac Sim hospital experiment (exp1)..."
+  info "Starting Isaac Sim hospital experiment (${profile})..."
+  info "USD path: ${usd_path}"
   exec "${ISAAC_PYTHON}" "${FAST_ISAAC_SIM}" \
     --headless \
     --render-headless \
     --render-every 2 \
-    --usd-path "${HOSPITAL_USD}" \
+    --usd-path "${usd_path}" \
     --no-ground-plane \
     --physics-step 0.0166667 \
     --target-sim-hz 60 \
@@ -603,7 +679,16 @@ main() {
     start-exp1)
       start_exp1
       ;;
+    start-exp1a)
+      start_exp1a
+      ;;
+    start-exp1b)
+      start_exp1b
+      ;;
     stop-exp1)
+      stop_exp1
+      ;;
+    stop-exp1a|stop-exp1b)
       stop_exp1
       ;;
     status)
@@ -617,10 +702,12 @@ main() {
       run_bridge "${1:-${ZENOH_PORT}}"
       ;;
     _run-compress)
-      run_compress
+      shift
+      run_compress "${1:-exp1}"
       ;;
     _run-isaac)
-      run_isaac
+      shift
+      run_isaac "${1:-exp1}"
       ;;
     -h|--help|help|"")
       usage
