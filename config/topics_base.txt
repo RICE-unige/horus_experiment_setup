@@ -1,5 +1,6 @@
-# Baseline experiment 1 topic regex allowlist (cloud <-> local).
+# Core topic regex allowlist (cloud <-> local).
 # One regex per line. Lines starting with # are ignored.
+# Camera and scan topics are profile-scoped and added at runtime by horus_experiment.sh.
 
 ^/clock$
 ^/carter[123]/chassis/odom$
@@ -7,6 +8,3 @@
 ^/carter[123]/cmd_vel$
 ^/carter[123]/(back|front|left|right)_stereo_imu/imu$
 ^/carter[123]/tf$
-^/carter[123]/front_2d_lidar/scan$
-^/carter[123]/front_stereo_camera/left/camera_info$
-^/carter[123]/front_stereo_camera/left/image_raw/compressed$

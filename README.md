@@ -8,7 +8,7 @@ This folder provides a cloud orchestration setup for **Experiment 1 (hospital sc
 
 ## Files
 
-- `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `start-exp1a`, `start-exp1b`, `start-exp1rtx`, `stop-exp1`, `status`, `print-local-connect`)
+- `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `start-exp1a`, `start-exp1b`, `start-exp1rtx`, `stop-exp1`, `logs`, `status`, `print-local-connect`)
 - `config/cyclonedds.xml` - CycloneDDS config used by this setup
 - `config/topics_base.txt` - baseline allowlisted topic regex rules
 - `config/topics_extra.txt` - editable extra topics for nav/slam and future features
@@ -42,6 +42,9 @@ Other experiment variants:
 > It also auto-downloads `zenoh-bridge-ros2dds` and auto-clones `isaac-projects` to `~/isaac-projects` when not found.
 > Default internal Zenoh listen port is `10000` unless you override `ZENOH_PORT`.
 > Experiment profiles launch hospital scenes with DLSS Performance (`--aa-mode 3 --dlss-exec-mode 0`) and without `--optimize-render` to avoid dark rendering.
+>
+> Bring-up is now fail-fast: if `bridge`, `compress`, or `isaac` exits, the full tmux session is stopped to prevent stale/repeating data.
+> `start-exp*` also blocks until required ROS messages are observed (readiness timeout default `90s`).
 
 Attach to logs:
 
@@ -75,6 +78,14 @@ Status:
 ./horus_experiment.sh status
 ```
 
+Logs:
+
+```bash
+./horus_experiment.sh logs
+# optional custom line count
+./horus_experiment.sh logs 200
+```
+
 ## Local Connect
 
 On cloud, print the connect command for your local machine:
@@ -98,8 +109,9 @@ If your cloud provider maps external port to a different internal port:
 ## Topic Forwarding (Strict Allowlist)
 
 Zenoh routing config is generated from:
-- `config/topics_base.txt`
-- `config/topics_extra.txt`
+- `config/topics_base.txt` (core topics)
+- profile-specific camera/scan allowlist built by `horus_experiment.sh`
+- `config/topics_extra.txt` (user extras)
 
 The generated config targets `zenoh-bridge-ros2dds v1.6.2` schema (`allow` only, no `deny` block).
 
@@ -121,14 +133,17 @@ To add future topics (navigation/slam/etc):
   - USD: `~/isaac-projects/hospital_experiment_exp1a.usda`
   - Camera relays: `carter1` only
   - Scene intent: all 3 robots LaserScan on, camera only on robot1 (`300x200`)
+  - Forwarding scope: camera topics only for `carter1`, scan topics for `carter1..3`
 - `start-exp1b`:
   - USD: `~/isaac-projects/hospital_experiment_exp1b.usda`
   - Camera relays: `carter1` only
   - Scene intent: no LaserScan publishers, camera only on robot1 (`300x200`)
+  - Forwarding scope: camera topics only for `carter1` (no scan topics)
 - `start-exp1rtx`:
   - USD: `~/isaac-projects/hospital_experiment_rtx3_400x300.usda`
   - Camera relays: `carter1`, `carter2`, `carter3`
   - Scene intent: front RTX 2D lidar on all 3 robots, one front camera per robot (`400x300`), PhysX LaserScan disabled via launcher flag
+  - Forwarding scope: camera and scan topics for `carter1..3`
 
 You can override profile USD paths with env vars:
 
@@ -169,6 +184,9 @@ ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
   - `HORUS_TMUX_SESSION`
   - `ZENOH_PORT` (internal listen port)
   - `ZENOH_EXTERNAL_PORT` (public/local connect port)
+  - `STARTUP_TIMEOUT_SEC`
+  - `HEALTH_POLL_SEC`
+  - `LOG_TAIL_LINES_DEFAULT`
   - `ISAAC_PYTHON`
   - `FAST_ISAAC_SIM`
   - `HOSPITAL_USD` (exp1)
@@ -184,3 +202,17 @@ ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
 - If public and internal ports differ, set both:
   - `ZENOH_PORT=<internal>`
   - `ZENOH_EXTERNAL_PORT=<public>`
+
+## Runtime Logs
+
+Each run writes timestamped logs to:
+
+```bash
+~/horus_experiment_setup/logs/<session>/<run_id>/
+```
+
+Expected files:
+- `bridge.log`
+- `compress.log`
+- `isaac.log`
+- `supervisor.log`

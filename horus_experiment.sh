@@ -16,6 +16,11 @@ ZENOH_CONFIG_FILE="${CONFIG_DIR}/zenoh_ros2dds.json5"
 SESSION_NAME="${HORUS_TMUX_SESSION:-horus_exp1}"
 ZENOH_PORT="${ZENOH_PORT:-10000}"
 ZENOH_EXTERNAL_PORT="${ZENOH_EXTERNAL_PORT:-${ZENOH_PORT}}"
+STARTUP_TIMEOUT_SEC="${STARTUP_TIMEOUT_SEC:-90}"
+HEALTH_POLL_SEC="${HEALTH_POLL_SEC:-2}"
+LOG_TAIL_LINES_DEFAULT="${LOG_TAIL_LINES_DEFAULT:-120}"
+SESSION_LOG_DIR="${LOG_DIR}/${SESSION_NAME}"
+LAST_RUN_META_FILE="${SESSION_LOG_DIR}/last_run.env"
 
 ROS_SETUP_FILE="/opt/ros/jazzy/setup.bash"
 ISAAC_PYTHON="${ISAAC_PYTHON:-/isaac-sim/python.sh}"
@@ -115,6 +120,7 @@ Commands:
   stop-exp1a          Alias of stop-exp1.
   stop-exp1b          Alias of stop-exp1.
   stop-exp1rtx        Alias of stop-exp1.
+  logs                Show recent logs from bridge/compress/isaac/supervisor.
   status              Show orchestration status and key runtime info.
   print-local-connect Print local-machine zenoh bridge connect command.
 
@@ -122,6 +128,9 @@ Environment overrides:
   HORUS_TMUX_SESSION  (default: ${SESSION_NAME})
   ZENOH_PORT          (internal listen port, default: ${ZENOH_PORT})
   ZENOH_EXTERNAL_PORT (public/local connect port, default: ${ZENOH_EXTERNAL_PORT})
+  STARTUP_TIMEOUT_SEC (startup readiness timeout, default: ${STARTUP_TIMEOUT_SEC})
+  HEALTH_POLL_SEC     (fail-fast supervisor poll interval, default: ${HEALTH_POLL_SEC})
+  LOG_TAIL_LINES_DEFAULT (default log lines for 'logs', default: ${LOG_TAIL_LINES_DEFAULT})
   ISAAC_PYTHON        (default: ${ISAAC_PYTHON})
   FAST_ISAAC_SIM      (default: ${fast_isaac_sim_display})
   HOSPITAL_USD        (exp1 default: ${hospital_usd_display})
@@ -171,8 +180,179 @@ resolve_experiment_usd() {
   esac
 }
 
+profile_topic_lines() {
+  local profile="$1"
+  case "${profile}" in
+    exp1|exp1rtx)
+      cat <<'EOF'
+^/carter[123]/front_2d_lidar/scan$
+^/carter[123]/front_stereo_camera/left/camera_info$
+^/carter[123]/front_stereo_camera/left/image_raw/compressed$
+EOF
+      ;;
+    exp1a)
+      cat <<'EOF'
+^/carter[123]/front_2d_lidar/scan$
+^/carter1/front_stereo_camera/left/camera_info$
+^/carter1/front_stereo_camera/left/image_raw/compressed$
+EOF
+      ;;
+    exp1b)
+      cat <<'EOF'
+^/carter1/front_stereo_camera/left/camera_info$
+^/carter1/front_stereo_camera/left/image_raw/compressed$
+EOF
+      ;;
+    *)
+      die "Unsupported profile '${profile}' for topic generation."
+      ;;
+  esac
+}
+
+required_readiness_topics() {
+  local profile="$1"
+  case "${profile}" in
+    exp1|exp1rtx)
+      cat <<'EOF'
+/clock
+/carter1/chassis/odom
+/carter1/front_stereo_camera/left/image_raw/compressed
+/carter2/front_stereo_camera/left/image_raw/compressed
+/carter3/front_stereo_camera/left/image_raw/compressed
+/carter1/front_2d_lidar/scan
+EOF
+      ;;
+    exp1a)
+      cat <<'EOF'
+/clock
+/carter1/chassis/odom
+/carter1/front_stereo_camera/left/image_raw/compressed
+/carter1/front_2d_lidar/scan
+EOF
+      ;;
+    exp1b)
+      cat <<'EOF'
+/clock
+/carter1/chassis/odom
+/carter1/front_stereo_camera/left/image_raw/compressed
+EOF
+      ;;
+    *)
+      die "Unsupported profile '${profile}' for readiness probes."
+      ;;
+  esac
+}
+
+write_last_run_metadata() {
+  local profile="$1"
+  local run_id="$2"
+  local run_dir="$3"
+  mkdir -p "${SESSION_LOG_DIR}"
+  cat > "${LAST_RUN_META_FILE}" <<EOF
+RUN_ID=${run_id}
+PROFILE=${profile}
+RUN_DIR=${run_dir}
+STARTED_AT_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+}
+
+latest_run_dir() {
+  local run_dir=""
+  if [[ -f "${LAST_RUN_META_FILE}" ]]; then
+    run_dir="$(awk -F= '$1=="RUN_DIR"{print substr($0,9)}' "${LAST_RUN_META_FILE}" | tail -n 1)"
+  fi
+  if [[ -z "${run_dir}" ]]; then
+    run_dir="$(ls -1dt "${SESSION_LOG_DIR}"/* 2>/dev/null | head -n 1 || true)"
+  fi
+  printf '%s' "${run_dir}"
+}
+
+setup_tmux_log_pipe() {
+  local window="$1"
+  local log_file="$2"
+  local cmd
+  cmd="cat >> $(printf '%q' "${log_file}")"
+  tmux pipe-pane -o -t "${SESSION_NAME}:${window}" "${cmd}"
+}
+
+check_critical_panes_for_session() {
+  local target_session="$1"
+  local -n reason_ref="$2"
+  local window pane_line dead dead_status pane_id
+  reason_ref=""
+  for window in bridge compress isaac; do
+    pane_line="$(tmux list-panes -t "${target_session}:${window}" -F "#{pane_dead} #{pane_dead_status} #{pane_id}" 2>/dev/null | head -n 1 || true)"
+    if [[ -z "${pane_line}" ]]; then
+      reason_ref="missing pane in window '${window}'"
+      return 1
+    fi
+    read -r dead dead_status pane_id <<< "${pane_line}"
+    if [[ "${dead}" != "0" ]]; then
+      reason_ref="window '${window}' pane ${pane_id} exited (status=${dead_status})"
+      return 1
+    fi
+  done
+  return 0
+}
+
+topic_has_message() {
+  local topic="$1"
+  local timeout_sec="${2:-5}"
+  local env_q topic_q
+  env_q="$(printf '%q' "${ENV_FILE}")"
+  topic_q="$(printf '%q' "${topic}")"
+  timeout "${timeout_sec}" bash -lc "set -euo pipefail; source ${env_q}; ros2 topic echo ${topic_q} --once >/dev/null" >/dev/null 2>&1
+}
+
+wait_for_startup_readiness() {
+  local profile="$1"
+  local timeout_sec="${2:-${STARTUP_TIMEOUT_SEC}}"
+  local deadline
+  local reason=""
+  local -a pending=()
+  local -a next_pending=()
+  local topic
+
+  mapfile -t pending < <(required_readiness_topics "${profile}")
+  deadline=$((SECONDS + timeout_sec))
+
+  info "Waiting for readiness data (timeout=${timeout_sec}s)..."
+  while (( SECONDS < deadline )); do
+    if ! tmux_has_session; then
+      error "Session '${SESSION_NAME}' disappeared during startup."
+      return 1
+    fi
+    if ! check_critical_panes_for_session "${SESSION_NAME}" reason; then
+      error "Fail-fast trigger during startup: ${reason}"
+      return 1
+    fi
+
+    next_pending=()
+    for topic in "${pending[@]}"; do
+      if topic_has_message "${topic}" 4; then
+        info "Ready topic received: ${topic}"
+      else
+        next_pending+=("${topic}")
+      fi
+    done
+    pending=("${next_pending[@]}")
+
+    if [[ "${#pending[@]}" -eq 0 ]]; then
+      ok "Startup readiness passed."
+      return 0
+    fi
+    sleep 1
+  done
+
+  error "Startup readiness timed out after ${timeout_sec}s. Missing topics:"
+  for topic in "${pending[@]}"; do
+    error "  - ${topic}"
+  done
+  return 1
+}
+
 ensure_directories() {
-  mkdir -p "${CONFIG_DIR}" "${ENV_DIR}" "${LOG_DIR}"
+  mkdir -p "${CONFIG_DIR}" "${ENV_DIR}" "${LOG_DIR}" "${SESSION_LOG_DIR}"
 }
 
 require_file() {
@@ -439,8 +619,17 @@ validate_experiment_profile() {
 }
 
 run_zenoh_config_generator() {
+  local profile="${1:-exp1}"
+  local runtime_extra_file=""
   ensure_topics_files
-  "${GEN_ZENOH_CONFIG_SCRIPT}" "${TOPICS_BASE_FILE}" "${TOPICS_EXTRA_FILE}" "${ZENOH_CONFIG_FILE}"
+  runtime_extra_file="$(mktemp "${CONFIG_DIR}/topics_runtime_extra.${profile}.XXXXXX")"
+  {
+    profile_topic_lines "${profile}"
+    echo
+    cat "${TOPICS_EXTRA_FILE}"
+  } > "${runtime_extra_file}"
+  "${GEN_ZENOH_CONFIG_SCRIPT}" "${TOPICS_BASE_FILE}" "${runtime_extra_file}" "${ZENOH_CONFIG_FILE}"
+  rm -f "${runtime_extra_file}"
 }
 
 bootstrap() {
@@ -451,7 +640,7 @@ bootstrap() {
   ensure_zenoh_bridge_assets
   validate_runtime_paths
   write_env_file
-  run_zenoh_config_generator
+  run_zenoh_config_generator exp1
 
   ok "Bootstrap complete."
   printf "\nNext step:\n"
@@ -468,6 +657,7 @@ tmux_has_session() {
 start_experiment() {
   local profile="$1"
   local usd_path
+  local run_id run_dir
   usd_path="$(resolve_experiment_usd "${profile}")"
   info "Starting ${profile} in tmux session '${SESSION_NAME}'..."
   local script_path="${SCRIPT_DIR}/horus_experiment.sh"
@@ -478,21 +668,39 @@ start_experiment() {
   require_file "${CYCLONEDDS_XML}" "CycloneDDS config"
 
   have_cmd tmux || die "tmux is not installed. Run bootstrap first."
-  run_zenoh_config_generator
+  run_zenoh_config_generator "${profile}"
 
   if tmux_has_session; then
     die "tmux session '${SESSION_NAME}' already exists. Use '$0 status' or '$0 stop-exp1' first."
   fi
 
+  run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+  run_dir="${SESSION_LOG_DIR}/${run_id}"
+  mkdir -p "${run_dir}"
+  write_last_run_metadata "${profile}" "${run_id}" "${run_dir}"
+
   tmux new-session -d -s "${SESSION_NAME}" -n bridge "${script_path} _run-bridge ${ZENOH_PORT}"
   tmux setw -t "${SESSION_NAME}" remain-on-exit on
   tmux new-window -t "${SESSION_NAME}:" -n compress "${script_path} _run-compress ${profile}"
   tmux new-window -t "${SESSION_NAME}:" -n isaac "${script_path} _run-isaac ${profile}"
+  tmux new-window -t "${SESSION_NAME}:" -n supervisor "${script_path} _run-supervisor ${SESSION_NAME} ${HEALTH_POLL_SEC} ${run_dir}"
+  setup_tmux_log_pipe bridge "${run_dir}/bridge.log"
+  setup_tmux_log_pipe compress "${run_dir}/compress.log"
+  setup_tmux_log_pipe isaac "${run_dir}/isaac.log"
+  setup_tmux_log_pipe supervisor "${run_dir}/supervisor.log"
   tmux select-window -t "${SESSION_NAME}:isaac"
 
-  ok "tmux session '${SESSION_NAME}' started."
+  if ! wait_for_startup_readiness "${profile}" "${STARTUP_TIMEOUT_SEC}"; then
+    warn "Startup failed for profile '${profile}'. Stopping session '${SESSION_NAME}'."
+    tmux kill-session -t "${SESSION_NAME}" >/dev/null 2>&1 || true
+    die "Startup readiness failed. Run '$0 logs' to inspect ${run_dir}."
+  fi
+
+  ok "tmux session '${SESSION_NAME}' started and healthy."
   printf "Profile: %s\n" "${profile}"
-  printf "USD: %s\n\n" "$(display_path "${usd_path}")"
+  printf "USD: %s\n" "$(display_path "${usd_path}")"
+  printf "Run ID: %s\n" "${run_id}"
+  printf "Logs: %s\n\n" "$(display_path "${run_dir}")"
   printf "\nAttach to session:\n"
   if [[ -n "${TMUX:-}" ]]; then
     printf "  tmux switch-client -t %s\n\n" "${SESSION_NAME}"
@@ -533,7 +741,43 @@ stop_exp1() {
   fi
 }
 
+logs() {
+  local lines="${1:-${LOG_TAIL_LINES_DEFAULT}}"
+  local run_dir=""
+  local log_file=""
+  local window=""
+  [[ "${lines}" =~ ^[0-9]+$ ]] || die "logs expects numeric line count; got '${lines}'."
+
+  if tmux_has_session; then
+    info "Showing last ${lines} lines from live tmux panes."
+    for window in bridge compress isaac supervisor; do
+      if tmux list-panes -t "${SESSION_NAME}:${window}" >/dev/null 2>&1; then
+        printf "\n===== %s (tmux:%s:%s) =====\n" "${window}" "${SESSION_NAME}" "${window}"
+        tmux capture-pane -p -t "${SESSION_NAME}:${window}" -S "-${lines}" | tail -n "${lines}"
+      fi
+    done
+    return
+  fi
+
+  run_dir="$(latest_run_dir)"
+  if [[ -z "${run_dir}" || ! -d "${run_dir}" ]]; then
+    die "No running session and no archived run logs found under $(display_path "${SESSION_LOG_DIR}")."
+  fi
+
+  info "Session not running. Showing archived logs from $(display_path "${run_dir}")"
+  for log_file in bridge.log compress.log isaac.log supervisor.log; do
+    if [[ -f "${run_dir}/${log_file}" ]]; then
+      printf "\n===== %s =====\n" "${log_file}"
+      tail -n "${lines}" "${run_dir}/${log_file}"
+    fi
+  done
+}
+
 status() {
+  local health_state="unhealthy"
+  local health_reason="session not running"
+  local reason=""
+  local run_dir=""
   info "Horus experiment status"
   printf "  project_root: %s\n" "$(display_path "${PROJECT_ROOT}")"
   printf "  env file: %s\n" "$(display_path "${ENV_FILE}")"
@@ -548,6 +792,8 @@ status() {
   printf "  session: %s\n" "${SESSION_NAME}"
   printf "  zenoh listen port (cloud internal): %s\n" "${ZENOH_PORT}"
   printf "  zenoh external port (local connect): %s\n" "${ZENOH_EXTERNAL_PORT}"
+  printf "  startup timeout sec: %s\n" "${STARTUP_TIMEOUT_SEC}"
+  printf "  health poll sec: %s\n" "${HEALTH_POLL_SEC}"
 
   if [[ -f "${ENV_FILE}" ]]; then
     (
@@ -562,11 +808,25 @@ status() {
     warn "Env file missing. Run: $0 bootstrap"
   fi
 
+  run_dir="$(latest_run_dir)"
+  if [[ -n "${run_dir}" ]]; then
+    printf "  latest run logs: %s\n" "$(display_path "${run_dir}")"
+  fi
+
   if tmux_has_session; then
+    if check_critical_panes_for_session "${SESSION_NAME}" reason; then
+      health_state="healthy"
+      health_reason="all critical panes are alive"
+    else
+      health_state="unhealthy"
+      health_reason="${reason}"
+    fi
+    printf "  health: %s (%s)\n" "${health_state}" "${health_reason}"
     ok "tmux session '${SESSION_NAME}' is running."
     tmux list-windows -t "${SESSION_NAME}" -F "  window=#{window_name} active=#{window_active} panes=#{window_panes}"
-    tmux list-panes -a -t "${SESSION_NAME}" -F "  pane=#{pane_id} window=#{window_name} pid=#{pane_pid} cmd=#{pane_current_command}"
+    tmux list-panes -a -t "${SESSION_NAME}" -F "  pane=#{pane_id} window=#{window_name} dead=#{pane_dead} dead_status=#{pane_dead_status} pid=#{pane_pid} cmd=#{pane_current_command}"
   else
+    printf "  health: %s (%s)\n" "${health_state}" "${health_reason}"
     warn "tmux session '${SESSION_NAME}' is not running."
   fi
 }
@@ -590,6 +850,25 @@ print_local_connect() {
     printf "  (Cloud bridge listens on internal %s; use external mapped port %s for local connect.)\n" "${ZENOH_PORT}" "${ZENOH_EXTERNAL_PORT}"
   fi
   printf "\n"
+}
+
+run_supervisor() {
+  local target_session="${1:-${SESSION_NAME}}"
+  local poll_sec="${2:-${HEALTH_POLL_SEC}}"
+  local run_dir="${3:-${SESSION_LOG_DIR}/unknown}"
+  local reason=""
+  mkdir -p "${run_dir}"
+
+  info "Supervisor started for session '${target_session}' (poll=${poll_sec}s, fail-fast=on)"
+  while tmux has-session -t "${target_session}" >/dev/null 2>&1; do
+    if ! check_critical_panes_for_session "${target_session}" reason; then
+      error "Fail-fast trigger: ${reason}"
+      printf "[ERROR] %s\n" "Fail-fast trigger: ${reason}" >> "${run_dir}/supervisor.log"
+      tmux kill-session -t "${target_session}" >/dev/null 2>&1 || true
+      exit 1
+    fi
+    sleep "${poll_sec}"
+  done
 }
 
 run_bridge() {
@@ -719,6 +998,10 @@ main() {
     stop-exp1a|stop-exp1b|stop-exp1rtx)
       stop_exp1
       ;;
+    logs)
+      shift
+      logs "${1:-${LOG_TAIL_LINES_DEFAULT}}"
+      ;;
     status)
       status
       ;;
@@ -736,6 +1019,10 @@ main() {
     _run-isaac)
       shift
       run_isaac "${1:-exp1}"
+      ;;
+    _run-supervisor)
+      shift
+      run_supervisor "${1:-${SESSION_NAME}}" "${2:-${HEALTH_POLL_SEC}}" "${3:-${SESSION_LOG_DIR}/unknown}"
       ;;
     -h|--help|help|"")
       usage
