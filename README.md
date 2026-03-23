@@ -1,6 +1,6 @@
-# Horus Experiment Setup (Cloud)
+# Horus Experiment Setup
 
-This folder provides a cloud orchestration setup for **Experiment 1 (hospital scene)** using:
+This folder provides orchestration for **Experiment 1 (hospital scene)** in both cloud and local-PC modes using:
 - Isaac Sim launcher from this repo (`fast_isaac_sim.py`)
 - ROS 2 Jazzy + CycloneDDS
 - Zenoh ROS2DDS bridge with strict topic allowlist
@@ -8,7 +8,7 @@ This folder provides a cloud orchestration setup for **Experiment 1 (hospital sc
 
 ## Files
 
-- `horus_experiment.sh` - operator script (`bootstrap`, `start-exp1`, `start-exp1a`, `start-exp1b`, `start-exp1rtx`, `stop-exp1`, `logs`, `status`, `print-local-connect`)
+- `horus_experiment.sh` - operator script for cloud and local launch flows (`bootstrap`, `start-exp1*`, `start-local-exp1rtx`, `stop-*`, `logs*`, `status*`, `print-local-connect`)
 - `config/cyclonedds.xml` - CycloneDDS config used by this setup
 - `config/topics_base.txt` - baseline allowlisted topic regex rules
 - `config/topics_extra.txt` - editable extra topics for nav/slam and future features
@@ -45,6 +45,48 @@ Other experiment variants:
 >
 > Bring-up is now fail-fast: if `bridge`, `compress`, or `isaac` exits, the full tmux session is stopped to prevent stale/repeating data.
 > `start-exp*` also blocks until required ROS messages are observed (readiness timeout default `90s`).
+
+## Quick Start (Local PC)
+
+Use this when Isaac Sim, `carter_multi_nav`, and `horus_sdk` all run on the same machine and you do **not** want Zenoh in the path.
+
+Use the dedicated local launcher:
+- `./horus_local_experiment.sh`
+
+The local launcher:
+- starts Isaac Sim,
+- starts the raw -> compressed camera relays,
+- waits for the compressed image topics to become active,
+- starts `carter_multi_nav`,
+- waits for `/shared_map` and `/tf_static`,
+- starts `sdk_hospital_carter_live_demo.py` in a second tmux session.
+
+```bash
+cd ~/horus_experiment_setup
+./horus_local_experiment.sh start
+```
+
+This launcher does not use the cloud env file and does not force `ROS_DOMAIN_ID`.
+
+Default tmux sessions:
+- runtime session: `horus_local_exp1`
+- SDK session: `horus_local_exp1_sdk`
+
+Useful local commands:
+
+```bash
+./horus_local_experiment.sh status
+./horus_local_experiment.sh logs
+./horus_local_experiment.sh stop
+```
+
+Default local paths/args:
+- nav workspace: `~/carter_multi_nav`
+- SDK workspace: `~/horus_sdk`
+- SDK demo: `python/examples/sdk_hospital_carter_live_demo.py`
+- workspace scale: `0.04`
+- shared map topic: `/shared_map`
+- body mesh mode: `preview_mesh`
 
 Attach to logs:
 
@@ -144,6 +186,12 @@ To add future topics (navigation/slam/etc):
   - Camera relays: `carter1`, `carter2`, `carter3`
   - Scene intent: front RTX 2D lidar on all 3 robots, one front camera per robot (`400x300`), PhysX LaserScan disabled via launcher flag
   - Forwarding scope: camera and scan topics for `carter1..3`
+- `start-local-exp1rtx`:
+  - Uses the same RTX USD as `start-exp1rtx`
+  - Skips Zenoh entirely
+  - Starts local navigation from `~/carter_multi_nav`
+  - Starts the HORUS Carter live demo from `~/horus_sdk`
+  - Requires the compressed image relay because the live demo consumes `/carter*/front_stereo_camera/left/image_raw/compressed`
 
 You can override profile USD paths with env vars:
 
@@ -176,12 +224,26 @@ ros2 topic echo /carter1/chassis/odom --once
 ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
 ```
 
+On local PC mode (no Zenoh):
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/horus_experiment_setup/env/cloud_ros.env
+
+ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
+ros2 topic echo /shared_map --once
+ros2 topic echo /tf_static --once
+./horus_experiment.sh status-local
+```
+
 ## Notes
 
 - This setup does **not** edit scene USD files.
 - Default `ROS_DOMAIN_ID` is `5` unless already set before launch.
 - Defaults can be overridden with env vars:
   - `HORUS_TMUX_SESSION`
+  - `HORUS_LOCAL_TMUX_SESSION`
+  - `HORUS_LOCAL_SDK_TMUX_SESSION`
   - `ZENOH_PORT` (internal listen port)
   - `ZENOH_EXTERNAL_PORT` (public/local connect port)
   - `STARTUP_TIMEOUT_SEC`
@@ -194,6 +256,12 @@ ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
   - `HOSPITAL_USD_EXP1B`
   - `HOSPITAL_USD_EXP1RTX`
   - `ZENOH_ROOT`, `ZENOH_BRIDGE`, `ZENOH_CONNECT_SCRIPT`
+  - `CARTER_MULTI_NAV_ROOT`, `CARTER_MULTI_NAV_SETUP_FILE`
+  - `CARTER_NAV_LAUNCH_PACKAGE`, `CARTER_NAV_LAUNCH_FILE`
+  - `HORUS_SDK_ROOT`, `HORUS_SDK_HOSPITAL_DEMO`, `SDK_PYTHON`
+  - `LOCAL_ROBOT_NAMES`, `LOCAL_WORKSPACE_SCALE`
+  - `LOCAL_TF_TOPIC`, `LOCAL_TF_STATIC_TOPIC`, `LOCAL_SHARED_MAP_TOPIC`
+  - `LOCAL_BODY_MESH_MODE`
 
 ## Common Cloud Pitfalls
 
@@ -216,3 +284,5 @@ Expected files:
 - `compress.log`
 - `isaac.log`
 - `supervisor.log`
+- `nav.log` (local mode)
+- `sdk.log` (local mode)

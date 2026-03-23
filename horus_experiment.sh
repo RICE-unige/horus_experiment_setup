@@ -14,6 +14,8 @@ GEN_ZENOH_CONFIG_SCRIPT="${CONFIG_DIR}/gen_zenoh_config.sh"
 ZENOH_CONFIG_FILE="${CONFIG_DIR}/zenoh_ros2dds.json5"
 
 SESSION_NAME="${HORUS_TMUX_SESSION:-horus_exp1}"
+LOCAL_SESSION_NAME="${HORUS_LOCAL_TMUX_SESSION:-horus_local_exp1}"
+LOCAL_SDK_SESSION_NAME="${HORUS_LOCAL_SDK_TMUX_SESSION:-${LOCAL_SESSION_NAME}_sdk}"
 ZENOH_PORT="${ZENOH_PORT:-10000}"
 ZENOH_EXTERNAL_PORT="${ZENOH_EXTERNAL_PORT:-${ZENOH_PORT}}"
 STARTUP_TIMEOUT_SEC="${STARTUP_TIMEOUT_SEC:-90}"
@@ -21,9 +23,18 @@ HEALTH_POLL_SEC="${HEALTH_POLL_SEC:-2}"
 LOG_TAIL_LINES_DEFAULT="${LOG_TAIL_LINES_DEFAULT:-120}"
 SESSION_LOG_DIR="${LOG_DIR}/${SESSION_NAME}"
 LAST_RUN_META_FILE="${SESSION_LOG_DIR}/last_run.env"
+LOCAL_SESSION_LOG_DIR="${LOG_DIR}/${LOCAL_SESSION_NAME}"
+LOCAL_LAST_RUN_META_FILE="${LOCAL_SESSION_LOG_DIR}/last_run.env"
 
 ROS_SETUP_FILE="/opt/ros/jazzy/setup.bash"
-ISAAC_PYTHON="${ISAAC_PYTHON:-/isaac-sim/python.sh}"
+ISAAC_PYTHON_CANDIDATE_1="${HOME}/isaac-sim/python.sh"
+ISAAC_PYTHON_CANDIDATE_2="/isaac-sim/python.sh"
+if [[ -x "${ISAAC_PYTHON_CANDIDATE_1}" ]]; then
+  ISAAC_PYTHON_DEFAULT="${ISAAC_PYTHON_CANDIDATE_1}"
+else
+  ISAAC_PYTHON_DEFAULT="${ISAAC_PYTHON_CANDIDATE_2}"
+fi
+ISAAC_PYTHON="${ISAAC_PYTHON:-${ISAAC_PYTHON_DEFAULT}}"
 
 PROJECT_ROOT_OVERRIDDEN="${PROJECT_ROOT+x}"
 FAST_ISAAC_SIM_OVERRIDDEN="${FAST_ISAAC_SIM+x}"
@@ -40,6 +51,36 @@ else
   PROJECT_ROOT_DEFAULT="${PROJECT_ROOT_CANDIDATE_2}"
 fi
 PROJECT_ROOT="${PROJECT_ROOT:-${PROJECT_ROOT_DEFAULT}}"
+
+CARTER_MULTI_NAV_ROOT_DEFAULT_1="${SCRIPT_DIR}/../carter_multi_nav"
+CARTER_MULTI_NAV_ROOT_DEFAULT_2="${HOME}/carter_multi_nav"
+if [[ -d "${CARTER_MULTI_NAV_ROOT_DEFAULT_1}" ]]; then
+  CARTER_MULTI_NAV_ROOT_DEFAULT="$(cd "${CARTER_MULTI_NAV_ROOT_DEFAULT_1}" && pwd)"
+else
+  CARTER_MULTI_NAV_ROOT_DEFAULT="${CARTER_MULTI_NAV_ROOT_DEFAULT_2}"
+fi
+CARTER_MULTI_NAV_ROOT="${CARTER_MULTI_NAV_ROOT:-${CARTER_MULTI_NAV_ROOT_DEFAULT}}"
+CARTER_MULTI_NAV_SETUP_FILE="${CARTER_MULTI_NAV_SETUP_FILE:-${CARTER_MULTI_NAV_ROOT}/install/setup.bash}"
+CARTER_NAV_LAUNCH_PACKAGE="${CARTER_NAV_LAUNCH_PACKAGE:-carter_multi_nav}"
+CARTER_NAV_LAUNCH_FILE="${CARTER_NAV_LAUNCH_FILE:-multi_carter_mapping_nav.launch.py}"
+
+HORUS_SDK_ROOT_DEFAULT_1="${SCRIPT_DIR}/../horus_sdk"
+HORUS_SDK_ROOT_DEFAULT_2="${HOME}/horus_sdk"
+if [[ -f "${HORUS_SDK_ROOT_DEFAULT_1}/python/examples/sdk_hospital_carter_live_demo.py" ]]; then
+  HORUS_SDK_ROOT_DEFAULT="$(cd "${HORUS_SDK_ROOT_DEFAULT_1}" && pwd)"
+else
+  HORUS_SDK_ROOT_DEFAULT="${HORUS_SDK_ROOT_DEFAULT_2}"
+fi
+HORUS_SDK_ROOT="${HORUS_SDK_ROOT:-${HORUS_SDK_ROOT_DEFAULT}}"
+HORUS_SDK_HOSPITAL_DEMO="${HORUS_SDK_HOSPITAL_DEMO:-${HORUS_SDK_ROOT}/python/examples/sdk_hospital_carter_live_demo.py}"
+SDK_PYTHON="${SDK_PYTHON:-python3}"
+
+LOCAL_ROBOT_NAMES="${LOCAL_ROBOT_NAMES:-carter1,carter2,carter3}"
+LOCAL_WORKSPACE_SCALE="${LOCAL_WORKSPACE_SCALE:-0.04}"
+LOCAL_TF_TOPIC="${LOCAL_TF_TOPIC:-/tf}"
+LOCAL_TF_STATIC_TOPIC="${LOCAL_TF_STATIC_TOPIC:-/tf_static}"
+LOCAL_SHARED_MAP_TOPIC="${LOCAL_SHARED_MAP_TOPIC:-/shared_map}"
+LOCAL_BODY_MESH_MODE="${LOCAL_BODY_MESH_MODE:-preview_mesh}"
 
 FAST_ISAAC_SIM="${FAST_ISAAC_SIM:-${PROJECT_ROOT}/fast_isaac_sim.py}"
 HOSPITAL_USD="${HOSPITAL_USD:-${PROJECT_ROOT}/hospital_experiment.usda}"
@@ -116,16 +157,22 @@ Commands:
   start-exp1a         Start hospital experiment exp1a in tmux session '${SESSION_NAME}'.
   start-exp1b         Start hospital experiment exp1b in tmux session '${SESSION_NAME}'.
   start-exp1rtx       Start hospital experiment exp1rtx in tmux session '${SESSION_NAME}'.
+  start-local-exp1rtx Start local exp1rtx pipeline (Isaac + compress + nav + SDK, no Zenoh).
   stop-exp1           Stop tmux session '${SESSION_NAME}'.
   stop-exp1a          Alias of stop-exp1.
   stop-exp1b          Alias of stop-exp1.
   stop-exp1rtx        Alias of stop-exp1.
+  stop-local-exp1rtx  Stop local sessions '${LOCAL_SESSION_NAME}' and '${LOCAL_SDK_SESSION_NAME}'.
   logs                Show recent logs from bridge/compress/isaac/supervisor.
+  logs-local          Show recent logs from local compress/isaac/nav/supervisor/sdk sessions.
   status              Show orchestration status and key runtime info.
+  status-local        Show local orchestration status and key runtime info.
   print-local-connect Print local-machine zenoh bridge connect command.
 
 Environment overrides:
   HORUS_TMUX_SESSION  (default: ${SESSION_NAME})
+  HORUS_LOCAL_TMUX_SESSION (default: ${LOCAL_SESSION_NAME})
+  HORUS_LOCAL_SDK_TMUX_SESSION (default: ${LOCAL_SDK_SESSION_NAME})
   ZENOH_PORT          (internal listen port, default: ${ZENOH_PORT})
   ZENOH_EXTERNAL_PORT (public/local connect port, default: ${ZENOH_EXTERNAL_PORT})
   STARTUP_TIMEOUT_SEC (startup readiness timeout, default: ${STARTUP_TIMEOUT_SEC})
@@ -143,6 +190,19 @@ Environment overrides:
   ZENOH_BRIDGE        (default: ${zenoh_bridge_display})
   ZENOH_CONNECT_SCRIPT(default: ${zenoh_connect_display})
   ZENOH_BRIDGE_VERSION(default: ${ZENOH_BRIDGE_VERSION})
+  CARTER_MULTI_NAV_ROOT (default: $(display_path "${CARTER_MULTI_NAV_ROOT}"))
+  CARTER_MULTI_NAV_SETUP_FILE (default: $(display_path "${CARTER_MULTI_NAV_SETUP_FILE}"))
+  CARTER_NAV_LAUNCH_PACKAGE (default: ${CARTER_NAV_LAUNCH_PACKAGE})
+  CARTER_NAV_LAUNCH_FILE (default: ${CARTER_NAV_LAUNCH_FILE})
+  HORUS_SDK_ROOT      (default: $(display_path "${HORUS_SDK_ROOT}"))
+  HORUS_SDK_HOSPITAL_DEMO (default: $(display_path "${HORUS_SDK_HOSPITAL_DEMO}"))
+  SDK_PYTHON          (default: ${SDK_PYTHON})
+  LOCAL_ROBOT_NAMES   (default: ${LOCAL_ROBOT_NAMES})
+  LOCAL_WORKSPACE_SCALE (default: ${LOCAL_WORKSPACE_SCALE})
+  LOCAL_TF_TOPIC      (default: ${LOCAL_TF_TOPIC})
+  LOCAL_TF_STATIC_TOPIC (default: ${LOCAL_TF_STATIC_TOPIC})
+  LOCAL_SHARED_MAP_TOPIC (default: ${LOCAL_SHARED_MAP_TOPIC})
+  LOCAL_BODY_MESH_MODE (default: ${LOCAL_BODY_MESH_MODE})
 EOF
 }
 
@@ -243,12 +303,28 @@ EOF
   esac
 }
 
+required_local_nav_topics() {
+  cat <<EOF
+${LOCAL_SHARED_MAP_TOPIC}
+${LOCAL_TF_STATIC_TOPIC}
+EOF
+}
+
 write_last_run_metadata() {
-  local profile="$1"
-  local run_id="$2"
-  local run_dir="$3"
-  mkdir -p "${SESSION_LOG_DIR}"
-  cat > "${LAST_RUN_META_FILE}" <<EOF
+  write_last_run_metadata_to "${LAST_RUN_META_FILE}" "$1" "$2" "$3"
+}
+
+write_local_last_run_metadata() {
+  write_last_run_metadata_to "${LOCAL_LAST_RUN_META_FILE}" "$1" "$2" "$3"
+}
+
+write_last_run_metadata_to() {
+  local meta_file="$1"
+  local profile="$2"
+  local run_id="$3"
+  local run_dir="$4"
+  mkdir -p "$(dirname "${meta_file}")"
+  cat > "${meta_file}" <<EOF
 RUN_ID=${run_id}
 PROFILE=${profile}
 RUN_DIR=${run_dir}
@@ -257,30 +333,43 @@ EOF
 }
 
 latest_run_dir() {
+  latest_run_dir_for "${LAST_RUN_META_FILE}" "${SESSION_LOG_DIR}"
+}
+
+latest_run_dir_for() {
+  local meta_file="$1"
+  local session_log_dir="$2"
   local run_dir=""
-  if [[ -f "${LAST_RUN_META_FILE}" ]]; then
-    run_dir="$(awk -F= '$1=="RUN_DIR"{print substr($0,9)}' "${LAST_RUN_META_FILE}" | tail -n 1)"
+  if [[ -f "${meta_file}" ]]; then
+    run_dir="$(awk -F= '$1=="RUN_DIR"{print substr($0,9)}' "${meta_file}" | tail -n 1)"
   fi
   if [[ -z "${run_dir}" ]]; then
-    run_dir="$(ls -1dt "${SESSION_LOG_DIR}"/* 2>/dev/null | head -n 1 || true)"
+    run_dir="$(ls -1dt "${session_log_dir}"/* 2>/dev/null | head -n 1 || true)"
   fi
   printf '%s' "${run_dir}"
 }
 
-setup_tmux_log_pipe() {
-  local window="$1"
-  local log_file="$2"
-  local cmd
-  cmd="cat >> $(printf '%q' "${log_file}")"
-  tmux pipe-pane -o -t "${SESSION_NAME}:${window}" "${cmd}"
+latest_local_run_dir() {
+  latest_run_dir_for "${LOCAL_LAST_RUN_META_FILE}" "${LOCAL_SESSION_LOG_DIR}"
 }
 
-check_critical_panes_for_session() {
+setup_tmux_log_pipe() {
+  local target_session="$1"
+  local window="$2"
+  local log_file="$3"
+  local cmd
+  cmd="cat >> $(printf '%q' "${log_file}")"
+  tmux pipe-pane -o -t "${target_session}:${window}" "${cmd}"
+}
+
+check_required_windows_for_session() {
   local target_session="$1"
   local -n reason_ref="$2"
+  shift 2
+  local -a windows=("$@")
   local window pane_line dead dead_status pane_id
   reason_ref=""
-  for window in bridge compress isaac; do
+  for window in "${windows[@]}"; do
     pane_line="$(tmux list-panes -t "${target_session}:${window}" -F "#{pane_dead} #{pane_dead_status} #{pane_id}" 2>/dev/null | head -n 1 || true)"
     if [[ -z "${pane_line}" ]]; then
       reason_ref="missing pane in window '${window}'"
@@ -295,6 +384,11 @@ check_critical_panes_for_session() {
   return 0
 }
 
+check_critical_panes_for_session() {
+  local target_session="$1"
+  check_required_windows_for_session "${target_session}" "$2" bridge compress isaac
+}
+
 topic_has_message() {
   local topic="$1"
   local timeout_sec="${2:-5}"
@@ -304,25 +398,37 @@ topic_has_message() {
   timeout "${timeout_sec}" bash -lc "set -euo pipefail; source ${env_q}; ros2 topic echo ${topic_q} --once >/dev/null" >/dev/null 2>&1
 }
 
-wait_for_startup_readiness() {
-  local profile="$1"
-  local timeout_sec="${2:-${STARTUP_TIMEOUT_SEC}}"
+wait_for_topics_readiness() {
+  local target_session="$1"
+  local timeout_sec="$2"
+  local label="$3"
+  shift 3
+  local -a critical_windows=()
+  local -a pending=()
   local deadline
   local reason=""
-  local -a pending=()
   local -a next_pending=()
   local topic
 
-  mapfile -t pending < <(required_readiness_topics "${profile}")
+  while (( "$#" > 0 )); do
+    if [[ "$1" == "--" ]]; then
+      shift
+      break
+    fi
+    critical_windows+=("$1")
+    shift
+  done
+
+  pending=("$@")
   deadline=$((SECONDS + timeout_sec))
 
-  info "Waiting for readiness data (timeout=${timeout_sec}s)..."
+  info "Waiting for ${label} (timeout=${timeout_sec}s)..."
   while (( SECONDS < deadline )); do
-    if ! tmux_has_session; then
-      error "Session '${SESSION_NAME}' disappeared during startup."
+    if ! tmux_has_named_session "${target_session}"; then
+      error "Session '${target_session}' disappeared during startup."
       return 1
     fi
-    if ! check_critical_panes_for_session "${SESSION_NAME}" reason; then
+    if ! check_required_windows_for_session "${target_session}" reason "${critical_windows[@]}"; then
       error "Fail-fast trigger during startup: ${reason}"
       return 1
     fi
@@ -351,8 +457,16 @@ wait_for_startup_readiness() {
   return 1
 }
 
+wait_for_startup_readiness() {
+  local profile="$1"
+  local timeout_sec="${2:-${STARTUP_TIMEOUT_SEC}}"
+  local -a pending=()
+  mapfile -t pending < <(required_readiness_topics "${profile}")
+  wait_for_topics_readiness "${SESSION_NAME}" "${timeout_sec}" "startup data" bridge compress isaac -- "${pending[@]}"
+}
+
 ensure_directories() {
-  mkdir -p "${CONFIG_DIR}" "${ENV_DIR}" "${LOG_DIR}" "${SESSION_LOG_DIR}"
+  mkdir -p "${CONFIG_DIR}" "${ENV_DIR}" "${LOG_DIR}" "${SESSION_LOG_DIR}" "${LOCAL_SESSION_LOG_DIR}"
 }
 
 require_file() {
@@ -555,6 +669,16 @@ EOF
   ok "Wrote ${ENV_FILE}"
 }
 
+ensure_runtime_env_file() {
+  if [[ -f "${ENV_FILE}" ]]; then
+    return
+  fi
+
+  info "ROS env file missing at $(display_path "${ENV_FILE}"); generating it now."
+  ensure_directories
+  write_env_file
+}
+
 install_dependencies_if_missing() {
   local packages=(
     git
@@ -609,6 +733,15 @@ validate_runtime_paths() {
   fi
 }
 
+validate_local_runtime_paths() {
+  require_file "${ROS_SETUP_FILE}" "ROS Jazzy setup file"
+  require_executable "${ISAAC_PYTHON}" "Isaac Sim python.sh"
+  require_file "${FAST_ISAAC_SIM}" "fast_isaac_sim.py"
+  require_file "${CARTER_MULTI_NAV_SETUP_FILE}" "Carter multi-nav setup file"
+  require_file "${HORUS_SDK_HOSPITAL_DEMO}" "HORUS Carter live demo"
+  have_cmd "${SDK_PYTHON}" || die "Missing SDK python interpreter: ${SDK_PYTHON}"
+}
+
 validate_experiment_profile() {
   local profile="$1"
   local usd_path
@@ -648,10 +781,20 @@ bootstrap() {
   printf "  %s start-exp1a\n" "$0"
   printf "  %s start-exp1b\n" "$0"
   printf "  %s start-exp1rtx\n" "$0"
+  printf "  %s start-local-exp1rtx\n" "$0"
 }
 
 tmux_has_session() {
-  tmux has-session -t "${SESSION_NAME}" >/dev/null 2>&1
+  tmux_has_named_session "${SESSION_NAME}"
+}
+
+tmux_has_named_session() {
+  local target_session="$1"
+  tmux has-session -t "${target_session}" >/dev/null 2>&1
+}
+
+tmux_has_local_sessions() {
+  tmux_has_named_session "${LOCAL_SESSION_NAME}" || tmux_has_named_session "${LOCAL_SDK_SESSION_NAME}"
 }
 
 start_experiment() {
@@ -664,7 +807,7 @@ start_experiment() {
   ensure_directories
   validate_runtime_paths
   validate_experiment_profile "${profile}"
-  require_file "${ENV_FILE}" "cloud ROS env file (run bootstrap first)"
+  ensure_runtime_env_file
   require_file "${CYCLONEDDS_XML}" "CycloneDDS config"
 
   have_cmd tmux || die "tmux is not installed. Run bootstrap first."
@@ -683,11 +826,11 @@ start_experiment() {
   tmux setw -t "${SESSION_NAME}" remain-on-exit on
   tmux new-window -t "${SESSION_NAME}:" -n compress "${script_path} _run-compress ${profile}"
   tmux new-window -t "${SESSION_NAME}:" -n isaac "${script_path} _run-isaac ${profile}"
-  tmux new-window -t "${SESSION_NAME}:" -n supervisor "${script_path} _run-supervisor ${SESSION_NAME} ${HEALTH_POLL_SEC} ${run_dir}"
-  setup_tmux_log_pipe bridge "${run_dir}/bridge.log"
-  setup_tmux_log_pipe compress "${run_dir}/compress.log"
-  setup_tmux_log_pipe isaac "${run_dir}/isaac.log"
-  setup_tmux_log_pipe supervisor "${run_dir}/supervisor.log"
+  tmux new-window -t "${SESSION_NAME}:" -n supervisor "${script_path} _run-supervisor ${SESSION_NAME} ${HEALTH_POLL_SEC} ${run_dir} bridge compress isaac"
+  setup_tmux_log_pipe "${SESSION_NAME}" bridge "${run_dir}/bridge.log"
+  setup_tmux_log_pipe "${SESSION_NAME}" compress "${run_dir}/compress.log"
+  setup_tmux_log_pipe "${SESSION_NAME}" isaac "${run_dir}/isaac.log"
+  setup_tmux_log_pipe "${SESSION_NAME}" supervisor "${run_dir}/supervisor.log"
   tmux select-window -t "${SESSION_NAME}:isaac"
 
   if ! wait_for_startup_readiness "${profile}" "${STARTUP_TIMEOUT_SEC}"; then
@@ -731,6 +874,116 @@ start_exp1rtx() {
   start_experiment exp1rtx
 }
 
+wait_for_local_nav_readiness() {
+  local timeout_sec="${1:-${STARTUP_TIMEOUT_SEC}}"
+  local -a pending=()
+  mapfile -t pending < <(required_local_nav_topics)
+  wait_for_topics_readiness "${LOCAL_SESSION_NAME}" "${timeout_sec}" "local navigation data" compress isaac nav -- "${pending[@]}"
+}
+
+start_local_experiment() {
+  local profile="$1"
+  local usd_path
+  local run_id run_dir
+  local script_path="${SCRIPT_DIR}/horus_experiment.sh"
+  local -a pending=()
+
+  usd_path="$(resolve_experiment_usd "${profile}")"
+  info "Starting local ${profile} pipeline (no Zenoh) in tmux session '${LOCAL_SESSION_NAME}'..."
+  ensure_directories
+  validate_local_runtime_paths
+  validate_experiment_profile "${profile}"
+  ensure_runtime_env_file
+  have_cmd tmux || die "tmux is not installed. Run bootstrap first."
+
+  if tmux_has_named_session "${LOCAL_SESSION_NAME}"; then
+    die "tmux session '${LOCAL_SESSION_NAME}' already exists. Use '$0 status-local' or '$0 stop-local-exp1rtx' first."
+  fi
+  if tmux_has_named_session "${LOCAL_SDK_SESSION_NAME}"; then
+    die "tmux session '${LOCAL_SDK_SESSION_NAME}' already exists. Use '$0 status-local' or '$0 stop-local-exp1rtx' first."
+  fi
+
+  run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+  run_dir="${LOCAL_SESSION_LOG_DIR}/${run_id}"
+  mkdir -p "${run_dir}"
+  write_local_last_run_metadata "${profile}" "${run_id}" "${run_dir}"
+
+  tmux new-session -d -s "${LOCAL_SESSION_NAME}" -n compress "${script_path} _run-compress ${profile}"
+  tmux setw -t "${LOCAL_SESSION_NAME}" remain-on-exit on
+  tmux new-window -t "${LOCAL_SESSION_NAME}:" -n isaac "${script_path} _run-isaac ${profile}"
+  setup_tmux_log_pipe "${LOCAL_SESSION_NAME}" compress "${run_dir}/compress.log"
+  setup_tmux_log_pipe "${LOCAL_SESSION_NAME}" isaac "${run_dir}/isaac.log"
+  tmux select-window -t "${LOCAL_SESSION_NAME}:isaac"
+
+  mapfile -t pending < <(required_readiness_topics "${profile}")
+  if ! wait_for_topics_readiness "${LOCAL_SESSION_NAME}" "${STARTUP_TIMEOUT_SEC}" "Isaac + compressed camera startup" compress isaac -- "${pending[@]}"; then
+    warn "Local startup failed for profile '${profile}'. Stopping session '${LOCAL_SESSION_NAME}'."
+    tmux kill-session -t "${LOCAL_SESSION_NAME}" >/dev/null 2>&1 || true
+    die "Local startup readiness failed. Run '$0 logs-local' to inspect ${run_dir}."
+  fi
+
+  tmux new-window -t "${LOCAL_SESSION_NAME}:" -n nav "${script_path} _run-local-nav"
+  setup_tmux_log_pipe "${LOCAL_SESSION_NAME}" nav "${run_dir}/nav.log"
+  tmux new-window -t "${LOCAL_SESSION_NAME}:" -n supervisor "${script_path} _run-supervisor ${LOCAL_SESSION_NAME} ${HEALTH_POLL_SEC} ${run_dir} compress isaac nav"
+  setup_tmux_log_pipe "${LOCAL_SESSION_NAME}" supervisor "${run_dir}/supervisor.log"
+
+  if ! wait_for_local_nav_readiness "${STARTUP_TIMEOUT_SEC}"; then
+    warn "Local navigation startup failed. Stopping sessions '${LOCAL_SESSION_NAME}' and '${LOCAL_SDK_SESSION_NAME}'."
+    tmux kill-session -t "${LOCAL_SESSION_NAME}" >/dev/null 2>&1 || true
+    tmux kill-session -t "${LOCAL_SDK_SESSION_NAME}" >/dev/null 2>&1 || true
+    die "Local nav readiness failed. Run '$0 logs-local' to inspect ${run_dir}."
+  fi
+
+  tmux new-session -d -s "${LOCAL_SDK_SESSION_NAME}" -n sdk "${script_path} _run-local-sdk"
+  tmux setw -t "${LOCAL_SDK_SESSION_NAME}" remain-on-exit on
+  setup_tmux_log_pipe "${LOCAL_SDK_SESSION_NAME}" sdk "${run_dir}/sdk.log"
+
+  sleep 2
+  local sdk_reason=""
+  if ! check_required_windows_for_session "${LOCAL_SDK_SESSION_NAME}" sdk_reason sdk; then
+    warn "Local SDK startup failed. Stopping sessions '${LOCAL_SESSION_NAME}' and '${LOCAL_SDK_SESSION_NAME}'."
+    tmux kill-session -t "${LOCAL_SESSION_NAME}" >/dev/null 2>&1 || true
+    tmux kill-session -t "${LOCAL_SDK_SESSION_NAME}" >/dev/null 2>&1 || true
+    die "Local SDK failed to stay alive: ${sdk_reason}. Run '$0 logs-local' to inspect ${run_dir}."
+  fi
+
+  ok "Local tmux sessions '${LOCAL_SESSION_NAME}' and '${LOCAL_SDK_SESSION_NAME}' started."
+  printf "Profile: %s\n" "${profile}"
+  printf "USD: %s\n" "$(display_path "${usd_path}")"
+  printf "Run ID: %s\n" "${run_id}"
+  printf "Logs: %s\n\n" "$(display_path "${run_dir}")"
+  printf "Attach to local runtime session:\n"
+  if [[ -n "${TMUX:-}" ]]; then
+    printf "  tmux switch-client -t %s\n" "${LOCAL_SESSION_NAME}"
+  else
+    printf "  tmux attach -t %s\n" "${LOCAL_SESSION_NAME}"
+  fi
+  printf "\nAttach to HORUS SDK session:\n"
+  printf "  tmux attach -t %s\n\n" "${LOCAL_SDK_SESSION_NAME}"
+}
+
+start_local_exp1rtx() {
+  start_local_experiment exp1rtx
+}
+
+stop_local_experiment() {
+  local stopped=0
+  info "Stopping local sessions '${LOCAL_SESSION_NAME}' and '${LOCAL_SDK_SESSION_NAME}'..."
+  if tmux_has_named_session "${LOCAL_SDK_SESSION_NAME}"; then
+    tmux kill-session -t "${LOCAL_SDK_SESSION_NAME}"
+    stopped=1
+  fi
+  if tmux_has_named_session "${LOCAL_SESSION_NAME}"; then
+    tmux kill-session -t "${LOCAL_SESSION_NAME}"
+    stopped=1
+  fi
+  if [[ "${stopped}" -eq 1 ]]; then
+    ok "Local sessions stopped."
+  else
+    warn "Local sessions are not running."
+  fi
+}
+
 stop_exp1() {
   info "Stopping session '${SESSION_NAME}'..."
   if tmux_has_session; then
@@ -741,21 +994,40 @@ stop_exp1() {
   fi
 }
 
+print_live_logs_for_session() {
+  local target_session="$1"
+  local lines="$2"
+  shift 2
+  local window=""
+  for window in "$@"; do
+    if tmux list-panes -t "${target_session}:${window}" >/dev/null 2>&1; then
+      printf "\n===== %s (tmux:%s:%s) =====\n" "${window}" "${target_session}" "${window}"
+      tmux capture-pane -p -t "${target_session}:${window}" -S "-${lines}" | tail -n "${lines}"
+    fi
+  done
+}
+
+print_archived_logs() {
+  local run_dir="$1"
+  local lines="$2"
+  shift 2
+  local log_file=""
+  for log_file in "$@"; do
+    if [[ -f "${run_dir}/${log_file}" ]]; then
+      printf "\n===== %s =====\n" "${log_file}"
+      tail -n "${lines}" "${run_dir}/${log_file}"
+    fi
+  done
+}
+
 logs() {
   local lines="${1:-${LOG_TAIL_LINES_DEFAULT}}"
   local run_dir=""
-  local log_file=""
-  local window=""
   [[ "${lines}" =~ ^[0-9]+$ ]] || die "logs expects numeric line count; got '${lines}'."
 
   if tmux_has_session; then
     info "Showing last ${lines} lines from live tmux panes."
-    for window in bridge compress isaac supervisor; do
-      if tmux list-panes -t "${SESSION_NAME}:${window}" >/dev/null 2>&1; then
-        printf "\n===== %s (tmux:%s:%s) =====\n" "${window}" "${SESSION_NAME}" "${window}"
-        tmux capture-pane -p -t "${SESSION_NAME}:${window}" -S "-${lines}" | tail -n "${lines}"
-      fi
-    done
+    print_live_logs_for_session "${SESSION_NAME}" "${lines}" bridge compress isaac supervisor
     return
   fi
 
@@ -765,12 +1037,40 @@ logs() {
   fi
 
   info "Session not running. Showing archived logs from $(display_path "${run_dir}")"
-  for log_file in bridge.log compress.log isaac.log supervisor.log; do
-    if [[ -f "${run_dir}/${log_file}" ]]; then
-      printf "\n===== %s =====\n" "${log_file}"
-      tail -n "${lines}" "${run_dir}/${log_file}"
+  print_archived_logs "${run_dir}" "${lines}" bridge.log compress.log isaac.log supervisor.log
+}
+
+logs_local() {
+  local lines="${1:-${LOG_TAIL_LINES_DEFAULT}}"
+  local run_dir=""
+  local showed_live=0
+  [[ "${lines}" =~ ^[0-9]+$ ]] || die "logs-local expects numeric line count; got '${lines}'."
+
+  if tmux_has_named_session "${LOCAL_SESSION_NAME}"; then
+    if [[ "${showed_live}" -eq 0 ]]; then
+      info "Showing last ${lines} lines from live local tmux panes."
+      showed_live=1
     fi
-  done
+    print_live_logs_for_session "${LOCAL_SESSION_NAME}" "${lines}" compress isaac nav supervisor
+  fi
+  if tmux_has_named_session "${LOCAL_SDK_SESSION_NAME}"; then
+    if [[ "${showed_live}" -eq 0 ]]; then
+      info "Showing last ${lines} lines from live local tmux panes."
+      showed_live=1
+    fi
+    print_live_logs_for_session "${LOCAL_SDK_SESSION_NAME}" "${lines}" sdk
+  fi
+  if [[ "${showed_live}" -eq 1 ]]; then
+    return
+  fi
+
+  run_dir="$(latest_local_run_dir)"
+  if [[ -z "${run_dir}" || ! -d "${run_dir}" ]]; then
+    die "No running local session and no archived run logs found under $(display_path "${LOCAL_SESSION_LOG_DIR}")."
+  fi
+
+  info "Local sessions not running. Showing archived logs from $(display_path "${run_dir}")"
+  print_archived_logs "${run_dir}" "${lines}" compress.log isaac.log nav.log supervisor.log sdk.log
 }
 
 status() {
@@ -805,7 +1105,7 @@ status() {
       printf "  cyclonedds_uri: %s\n" "${CYCLONEDDS_URI:-unset}"
     )
   else
-    warn "Env file missing. Run: $0 bootstrap"
+    warn "Env file missing. It will be generated automatically on the next start command."
   fi
 
   run_dir="$(latest_run_dir)"
@@ -828,6 +1128,80 @@ status() {
   else
     printf "  health: %s (%s)\n" "${health_state}" "${health_reason}"
     warn "tmux session '${SESSION_NAME}' is not running."
+  fi
+}
+
+status_local() {
+  local main_health="unhealthy"
+  local main_reason="session not running"
+  local sdk_health="unhealthy"
+  local sdk_reason="session not running"
+  local reason=""
+  local run_dir=""
+
+  info "Horus local experiment status"
+  printf "  project_root: %s\n" "$(display_path "${PROJECT_ROOT}")"
+  printf "  env file: %s\n" "$(display_path "${ENV_FILE}")"
+  printf "  isaac python: %s\n" "$(display_path "${ISAAC_PYTHON}")"
+  printf "  launcher: %s\n" "$(display_path "${FAST_ISAAC_SIM}")"
+  printf "  usd (exp1rtx): %s\n" "$(display_path "${HOSPITAL_USD_EXP1RTX}")"
+  printf "  local runtime session: %s\n" "${LOCAL_SESSION_NAME}"
+  printf "  local sdk session: %s\n" "${LOCAL_SDK_SESSION_NAME}"
+  printf "  carter_multi_nav root: %s\n" "$(display_path "${CARTER_MULTI_NAV_ROOT}")"
+  printf "  carter_multi_nav setup: %s\n" "$(display_path "${CARTER_MULTI_NAV_SETUP_FILE}")"
+  printf "  horus_sdk root: %s\n" "$(display_path "${HORUS_SDK_ROOT}")"
+  printf "  horus demo: %s\n" "$(display_path "${HORUS_SDK_HOSPITAL_DEMO}")"
+  printf "  local robot names: %s\n" "${LOCAL_ROBOT_NAMES}"
+  printf "  local workspace scale: %s\n" "${LOCAL_WORKSPACE_SCALE}"
+  printf "  local tf topic: %s\n" "${LOCAL_TF_TOPIC}"
+  printf "  local tf_static topic: %s\n" "${LOCAL_TF_STATIC_TOPIC}"
+  printf "  local shared map topic: %s\n" "${LOCAL_SHARED_MAP_TOPIC}"
+  printf "  local body mesh mode: %s\n" "${LOCAL_BODY_MESH_MODE}"
+
+  if [[ -f "${ENV_FILE}" ]]; then
+    (
+      set +u
+      source "${ENV_FILE}"
+      printf "  ros_domain_id (effective default): %s\n" "${ROS_DOMAIN_ID:-5}"
+      printf "  rmw_implementation: %s\n" "${RMW_IMPLEMENTATION:-unset}"
+      printf "  ros_localhost_only: %s\n" "${ROS_LOCALHOST_ONLY:-unset}"
+      printf "  cyclonedds_uri: %s\n" "${CYCLONEDDS_URI:-unset}"
+    )
+  else
+    warn "Env file missing. It will be generated automatically on the next local start command."
+  fi
+
+  run_dir="$(latest_local_run_dir)"
+  if [[ -n "${run_dir}" ]]; then
+    printf "  latest local run logs: %s\n" "$(display_path "${run_dir}")"
+  fi
+
+  if tmux_has_named_session "${LOCAL_SESSION_NAME}"; then
+    if check_required_windows_for_session "${LOCAL_SESSION_NAME}" reason compress isaac nav; then
+      main_health="healthy"
+      main_reason="all critical panes are alive"
+    else
+      main_reason="${reason}"
+    fi
+    printf "  local runtime health: %s (%s)\n" "${main_health}" "${main_reason}"
+    tmux list-windows -t "${LOCAL_SESSION_NAME}" -F "  runtime window=#{window_name} active=#{window_active} panes=#{window_panes}"
+    tmux list-panes -a -t "${LOCAL_SESSION_NAME}" -F "  runtime pane=#{pane_id} window=#{window_name} dead=#{pane_dead} dead_status=#{pane_dead_status} pid=#{pane_pid} cmd=#{pane_current_command}"
+  else
+    printf "  local runtime health: %s (%s)\n" "${main_health}" "${main_reason}"
+  fi
+
+  if tmux_has_named_session "${LOCAL_SDK_SESSION_NAME}"; then
+    if check_required_windows_for_session "${LOCAL_SDK_SESSION_NAME}" reason sdk; then
+      sdk_health="healthy"
+      sdk_reason="sdk pane is alive"
+    else
+      sdk_reason="${reason}"
+    fi
+    printf "  local sdk health: %s (%s)\n" "${sdk_health}" "${sdk_reason}"
+    tmux list-windows -t "${LOCAL_SDK_SESSION_NAME}" -F "  sdk window=#{window_name} active=#{window_active} panes=#{window_panes}"
+    tmux list-panes -a -t "${LOCAL_SDK_SESSION_NAME}" -F "  sdk pane=#{pane_id} window=#{window_name} dead=#{pane_dead} dead_status=#{pane_dead_status} pid=#{pane_pid} cmd=#{pane_current_command}"
+  else
+    printf "  local sdk health: %s (%s)\n" "${sdk_health}" "${sdk_reason}"
   fi
 }
 
@@ -856,12 +1230,17 @@ run_supervisor() {
   local target_session="${1:-${SESSION_NAME}}"
   local poll_sec="${2:-${HEALTH_POLL_SEC}}"
   local run_dir="${3:-${SESSION_LOG_DIR}/unknown}"
+  shift 3 || true
+  local -a critical_windows=("$@")
   local reason=""
   mkdir -p "${run_dir}"
+  if [[ "${#critical_windows[@]}" -eq 0 ]]; then
+    critical_windows=(bridge compress isaac)
+  fi
 
   info "Supervisor started for session '${target_session}' (poll=${poll_sec}s, fail-fast=on)"
-  while tmux has-session -t "${target_session}" >/dev/null 2>&1; do
-    if ! check_critical_panes_for_session "${target_session}" reason; then
+  while tmux_has_named_session "${target_session}"; do
+    if ! check_required_windows_for_session "${target_session}" reason "${critical_windows[@]}"; then
       error "Fail-fast trigger: ${reason}"
       printf "[ERROR] %s\n" "Fail-fast trigger: ${reason}" >> "${run_dir}/supervisor.log"
       tmux kill-session -t "${target_session}" >/dev/null 2>&1 || true
@@ -874,7 +1253,7 @@ run_supervisor() {
 run_bridge() {
   local port="${1:-${ZENOH_PORT}}"
   mkdir -p "${LOG_DIR}"
-  require_file "${ENV_FILE}" "cloud ROS env file"
+  ensure_runtime_env_file
   require_file "${ZENOH_CONFIG_FILE}" "zenoh config file"
   require_executable "${ZENOH_BRIDGE}" "zenoh bridge"
 
@@ -905,7 +1284,7 @@ start_one_compression_relay() {
 run_compress() {
   local profile="${1:-exp1}"
   local -a robots=()
-  require_file "${ENV_FILE}" "cloud ROS env file"
+  ensure_runtime_env_file
   set +u
   # shellcheck disable=SC1090
   source "${ENV_FILE}"
@@ -938,13 +1317,51 @@ run_compress() {
   wait
 }
 
+run_local_nav() {
+  ensure_runtime_env_file
+  require_file "${CARTER_MULTI_NAV_SETUP_FILE}" "Carter multi-nav setup file"
+  set +u
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  # shellcheck disable=SC1090
+  source "${CARTER_MULTI_NAV_SETUP_FILE}"
+  set -u
+
+  have_cmd ros2 || die "ros2 command not found after sourcing ${ENV_FILE} and ${CARTER_MULTI_NAV_SETUP_FILE}"
+
+  cd "${CARTER_MULTI_NAV_ROOT}"
+  info "Starting local Carter navigation stack from $(display_path "${CARTER_MULTI_NAV_ROOT}")"
+  exec ros2 launch "${CARTER_NAV_LAUNCH_PACKAGE}" "${CARTER_NAV_LAUNCH_FILE}" rviz:=false
+}
+
+run_local_sdk() {
+  ensure_runtime_env_file
+  require_file "${HORUS_SDK_HOSPITAL_DEMO}" "HORUS Carter live demo"
+  have_cmd "${SDK_PYTHON}" || die "SDK python interpreter not found: ${SDK_PYTHON}"
+
+  set +u
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set -u
+
+  cd "${HORUS_SDK_ROOT}"
+  info "Starting HORUS Carter live demo from $(display_path "${HORUS_SDK_ROOT}")"
+  exec "${SDK_PYTHON}" "${HORUS_SDK_HOSPITAL_DEMO}" \
+    --robot-names "${LOCAL_ROBOT_NAMES}" \
+    --workspace-scale "${LOCAL_WORKSPACE_SCALE}" \
+    --tf-topic "${LOCAL_TF_TOPIC}" \
+    --tf-static-topic "${LOCAL_TF_STATIC_TOPIC}" \
+    --shared-map-topic "${LOCAL_SHARED_MAP_TOPIC}" \
+    --body-mesh-mode "${LOCAL_BODY_MESH_MODE}"
+}
+
 run_isaac() {
   local profile="${1:-exp1}"
   local usd_path
   local -a extra_args=()
   usd_path="$(resolve_experiment_usd "${profile}")"
 
-  require_file "${ENV_FILE}" "cloud ROS env file"
+  ensure_runtime_env_file
   require_executable "${ISAAC_PYTHON}" "Isaac Sim python.sh"
   require_file "${FAST_ISAAC_SIM}" "fast_isaac_sim.py"
   require_file "${usd_path}" "${profile} usd"
@@ -992,18 +1409,31 @@ main() {
     start-exp1rtx)
       start_exp1rtx
       ;;
+    start-local-exp1rtx)
+      start_local_exp1rtx
+      ;;
     stop-exp1)
       stop_exp1
       ;;
     stop-exp1a|stop-exp1b|stop-exp1rtx)
       stop_exp1
       ;;
+    stop-local-exp1rtx)
+      stop_local_experiment
+      ;;
     logs)
       shift
       logs "${1:-${LOG_TAIL_LINES_DEFAULT}}"
       ;;
+    logs-local)
+      shift
+      logs_local "${1:-${LOG_TAIL_LINES_DEFAULT}}"
+      ;;
     status)
       status
+      ;;
+    status-local)
+      status_local
       ;;
     print-local-connect)
       print_local_connect
@@ -1020,9 +1450,15 @@ main() {
       shift
       run_isaac "${1:-exp1}"
       ;;
+    _run-local-nav)
+      run_local_nav
+      ;;
+    _run-local-sdk)
+      run_local_sdk
+      ;;
     _run-supervisor)
       shift
-      run_supervisor "${1:-${SESSION_NAME}}" "${2:-${HEALTH_POLL_SEC}}" "${3:-${SESSION_LOG_DIR}/unknown}"
+      run_supervisor "${1:-${SESSION_NAME}}" "${2:-${HEALTH_POLL_SEC}}" "${3:-${SESSION_LOG_DIR}/unknown}" "${@:4}"
       ;;
     -h|--help|help|"")
       usage
